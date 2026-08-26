@@ -1,0 +1,9 @@
+exceptions:
+  - id: EX-M4-HUMAN-MATRIX-001
+    status: pending
+    scope: AC-28, AC-29, AC-30, physical six-key rollover, and target-user evidence
+    owner: xiyaofeng
+    approver: pending owner review
+    reason: These are explicitly M4 human, brand-browser, assistive-technology, real-device, and physical-hardware checks; synthetic browser events cannot substitute for them.
+    expires: 2026-10-31
+    retest: Record exact browser, OS, device, assistive-technology, hardware, date, commit, and result in versioned compatibility and accessibility evidence before any stable release decision.

@@ -1,0 +1,25 @@
+export {
+  BrailleController as a,
+  BrailleInputException as b,
+  brailleToCodePoint as c,
+  brailleToDots as d,
+  createBrailleController as e,
+  defaultControllerOptions as f,
+  defaultKeyboardOptions as g,
+  dotsToBraille as h,
+  dotsToMask as i,
+  extensionId as j,
+  isBrailleDot as k,
+  isExtensionId as l,
+  isInputMode as m,
+  isInputSource as n,
+} from "../index.js";
+export {
+  attachBrailleEditable as o,
+  attachKeyboard as p,
+  attachPointer as q,
+  createActivationGroup as r,
+  getActivationGroup as s,
+  isEditableTargetAttached as t,
+  validateBrailleEditableTarget as u,
+} from "./adapters.js";

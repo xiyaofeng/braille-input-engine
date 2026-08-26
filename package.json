@@ -1,0 +1,184 @@
+{
+  "name": "braille-input-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless six-dot Braille input engine for the web.",
+  "author": "xiyaofeng",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "npm@11.17.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.19.0",
+      "onFail": "warn"
+    },
+    "packageManager": {
+      "name": "npm",
+      "version": "11.17.0",
+      "onFail": "warn"
+    }
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xiyaofeng/braille-input-engine.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xiyaofeng/braille-input-engine/issues"
+  },
+  "homepage": "https://github.com/xiyaofeng/braille-input-engine",
+  "files": [
+    "dist",
+    "!dist/performance-*.json",
+    "LICENSE",
+    "README.md",
+    "DEPLOYMENT.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "docs/third-party-licenses.md"
+  ],
+  "sideEffects": [
+    "dist/default-ui.css",
+    "dist/auto-register.js",
+    "dist/auto-register.cjs"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/types/index.d.mts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/types/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./core": {
+      "import": {
+        "types": "./dist/types/index.d.mts",
+        "default": "./dist/core.js"
+      },
+      "require": {
+        "types": "./dist/types/index.d.cts",
+        "default": "./dist/core.cjs"
+      }
+    },
+    "./browser": {
+      "import": {
+        "types": "./dist/types/entries/browser.d.mts",
+        "default": "./dist/browser.js"
+      },
+      "require": {
+        "types": "./dist/types/entries/browser.d.cts",
+        "default": "./dist/browser.cjs"
+      }
+    },
+    "./adapters": {
+      "import": {
+        "types": "./dist/types/entries/adapters.d.mts",
+        "default": "./dist/adapters.js"
+      },
+      "require": {
+        "types": "./dist/types/entries/adapters.d.cts",
+        "default": "./dist/adapters.cjs"
+      }
+    },
+    "./default-ui": {
+      "import": {
+        "types": "./dist/types/ui/default-ui.d.mts",
+        "default": "./dist/default-ui.js"
+      },
+      "require": {
+        "types": "./dist/types/ui/default-ui.d.cts",
+        "default": "./dist/default-ui.cjs"
+      }
+    },
+    "./web-component": {
+      "import": {
+        "types": "./dist/types/web-component/braille-input.d.mts",
+        "default": "./dist/web-component.js"
+      },
+      "require": {
+        "types": "./dist/types/web-component/braille-input.d.cts",
+        "default": "./dist/web-component.cjs"
+      }
+    },
+    "./auto-register": {
+      "import": {
+        "types": "./dist/types/entries/auto-register.d.mts",
+        "default": "./dist/auto-register.js"
+      },
+      "require": {
+        "types": "./dist/types/entries/auto-register.d.cts",
+        "default": "./dist/auto-register.cjs"
+      }
+    },
+    "./default-ui.css": "./dist/default-ui.css",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "npm run build:js && npm run build:types && npm run build:css",
+    "build:js": "node scripts/build.mjs && node scripts/minify-dist.mjs",
+    "build:types": "tsc -p tsconfig.types.json && node scripts/copy-conditional-types.mjs",
+    "build:css": "node scripts/build-css.mjs",
+    "build:demo": "node scripts/build-demo.mjs",
+    "dev": "vite demo --host 127.0.0.1",
+    "preview:demo": "vite preview --outDir dist/demo --host 127.0.0.1",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run tests/unit tests/model --coverage",
+    "test:dom": "vitest run tests/dom",
+    "test:browser": "playwright test tests/browser",
+    "test:a11y": "playwright test tests/a11y",
+    "test:types": "vitest run tests/contract",
+    "test:ssr": "node scripts/test-ssr.mjs",
+    "test:package": "node scripts/test-package.mjs",
+    "test:package:case": "node scripts/test-package.mjs",
+    "test:package:matrix": "node scripts/test-package-matrix.mjs",
+    "test:security-policy": "vitest run tests/contract/vulnerability-policy.test.mjs",
+    "test:performance": "node scripts/performance.mjs",
+    "test:performance:negative": "node scripts/performance-negative.mjs",
+    "size": "node scripts/size.mjs",
+    "check:links": "markdown-link-check README.md DEPLOYMENT.md SECURITY.md SPECIFICATION.md",
+    "check:licenses": "node scripts/check-licenses.mjs",
+    "check:security": "node scripts/check-security.mjs",
+    "check:vulnerabilities": "node scripts/check-vulnerabilities.mjs",
+    "check:package-matrix": "node scripts/check-package-matrix.mjs",
+    "check:api": "node scripts/check-api.mjs",
+    "check:toolchain": "node scripts/check-toolchain.mjs",
+    "pack:release": "node scripts/pack-release.mjs",
+    "verify:release-asset": "node scripts/verify-release-asset.mjs",
+    "verify:release-evidence": "node scripts/verify-release-evidence.mjs",
+    "ci:auto": "node scripts/ci-auto.mjs"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@axe-core/playwright": "4.13.0",
+    "@eslint/js": "10.0.1",
+    "@microsoft/api-extractor": "7.58.13",
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.13.3",
+    "@vitest/coverage-v8": "4.1.11",
+    "axe-core": "4.13.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.8.1",
+    "fast-check": "4.9.0",
+    "gzip-size": "7.0.0",
+    "jsdom": "30.0.1",
+    "license-checker-rseidelsohn": "5.0.1",
+    "markdown-link-check": "3.15.0",
+    "playwright": "1.62.1",
+    "prettier": "3.9.6",
+    "publint": "0.3.24",
+    "terser": "5.44.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

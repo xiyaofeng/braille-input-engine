@@ -1,0 +1,6 @@
+{
+  "warmupActions": 200,
+  "rounds": 5,
+  "actionsPerRound": 1000,
+  "requiredPhases": ["warmup", "actions", "lifecycle"]
+}

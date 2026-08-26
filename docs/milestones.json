@@ -1,0 +1,26 @@
+{
+  "milestone": "M3",
+  "enabledSuites": [
+    "format",
+    "lint",
+    "type",
+    "unit",
+    "dom",
+    "model",
+    "contract",
+    "build",
+    "ssr",
+    "browser",
+    "a11y",
+    "package",
+    "size",
+    "performance",
+    "api",
+    "security",
+    "license",
+    "links",
+    "coverage"
+  ],
+  "requiredStatus": ["automated-m3-gate"],
+  "approvedBy": "SPECIFICATION.md#27.1"
+}

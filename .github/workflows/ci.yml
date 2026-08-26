@@ -1,0 +1,94 @@
+name: automated-m3-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci-auto:
+    name: m3-ci-auto
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (v4)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Setup Node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run ci:auto
+
+  package-artifact:
+    name: packed-package-artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (v4)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Setup Node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Pack required consumer artifact
+        run: mkdir -p .artifacts && npm pack --json --ignore-scripts --pack-destination .artifacts
+      - name: Upload packed consumer artifact (v4)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: braille-input-engine-package
+          path: .artifacts/braille-input-engine-0.1.0.tgz
+
+  packed-consumer-matrix:
+    name: packed-consumer-node-${{ matrix.node }}-typescript-${{ matrix.typescript }}
+    needs: package-artifact
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.12.0", "24.19.0"]
+        typescript: ["5.7.3", "6.0.3"]
+    steps:
+      - name: Checkout repository (v4)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Setup Node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Download packed consumer artifact (v4)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: braille-input-engine-package
+          path: .artifacts
+      - name: Run packed consumer compatibility case
+        env:
+          BRAILLE_PACKAGE_TARBALL: .artifacts/braille-input-engine-0.1.0.tgz
+          BRAILLE_PACKAGE_EXPECTED_NODE_VERSION: ${{ matrix.node }}
+          BRAILLE_PACKAGE_TYPESCRIPT_VERSION: ${{ matrix.typescript }}
+          BRAILLE_PACKAGE_MATRIX_ID: node-${{ matrix.node }}-typescript-${{ matrix.typescript }}
+        run: npm run test:package:case
+
+  automated-m3-gate:
+    name: automated-m3-gate
+    if: ${{ always() }}
+    needs:
+      - ci-auto
+      - packed-consumer-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every M3 gate
+        if: ${{ needs.ci-auto.result != 'success' || needs.packed-consumer-matrix.result != 'success' }}
+        run: |
+          echo "ci-auto result: ${{ needs.ci-auto.result }}"
+          echo "packed-consumer-matrix result: ${{ needs.packed-consumer-matrix.result }}"
+          exit 1
+      - run: echo "automated-m3-gate passed with ci-auto and all packed consumer combinations."

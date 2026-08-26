@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.vite/
+.DS_Store
+.local/
+*.tgz
+release/*
+temp/
+tsdoc-metadata.json
+DEVELOPMENT.md
+docs/performance-baseline.md
+docs/performance-baseline.json
+docs/reviews/
+docs/release/2026-08-24-github-publication-readiness-guide.md

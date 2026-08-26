@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "EAI_AGAIN",
+    "summary": "registry unavailable"
+  }
+}

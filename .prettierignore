@@ -1,0 +1,12 @@
+DEVELOPMENT.md
+LICENSE
+package-lock.json
+.local/
+node_modules/
+dist/
+coverage/
+release/
+docs/api/
+docs/performance-baseline.md
+temp/
+tsdoc-metadata.json

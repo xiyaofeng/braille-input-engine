@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "tag", "commit", "testedAt", "status", "assets", "knownLimitations", "exceptions", "ownerDecision"],
+  "properties": {
+    "version": { "type": "string" },
+    "tag": { "type": "string" },
+    "commit": { "type": "string" },
+    "testedAt": { "type": "string" },
+    "status": { "enum": ["pending", "passed", "failed"] },
+    "assets": { "type": "array", "items": { "type": "object", "required": ["name", "sha256"], "properties": { "name": { "type": "string" }, "sha256": { "type": "string" } } } },
+    "knownLimitations": { "type": "array", "items": { "type": "string" } },
+    "exceptions": { "type": "array", "items": { "type": "string" } },
+    "ownerDecision": { "type": "string" }
+  }
+}

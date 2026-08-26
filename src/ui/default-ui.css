@@ -1,0 +1,84 @@
+[data-braille-ui-root],
+braille-input {
+  --braille-bg: Canvas;
+  --braille-fg: CanvasText;
+  --braille-dot-size: 2.25rem;
+  --braille-dot-gap: 0.65rem;
+  --braille-dot-idle: color-mix(
+    in srgb,
+    var(--braille-fg) 22%,
+    var(--braille-bg)
+  );
+  --braille-dot-active: Highlight;
+  --braille-focus: Highlight;
+  --braille-font: system-ui, sans-serif;
+  color: var(--braille-fg);
+  background: var(--braille-bg);
+  font-family: var(--braille-font);
+}
+
+[data-braille-ui-root] [part~="container"],
+braille-input::part(container) {
+  box-sizing: border-box;
+  display: grid;
+  gap: 0.75rem;
+  max-width: 42rem;
+  padding: 1rem;
+}
+
+[data-braille-ui-root] [part~="cell"],
+braille-input::part(cell) {
+  display: grid;
+  grid-template-columns: repeat(2, var(--braille-dot-size));
+  grid-template-rows: repeat(3, var(--braille-dot-size));
+  grid-auto-flow: column;
+  gap: var(--braille-dot-gap);
+  width: max-content;
+  touch-action: none;
+}
+
+[data-braille-ui-root] [part~="dot"],
+braille-input::part(dot) {
+  min-width: 44px;
+  min-height: 44px;
+  border: 2px solid var(--braille-dot-idle);
+  border-radius: 50%;
+  color: var(--braille-fg);
+  background: transparent;
+}
+
+[data-braille-ui-root] [part~="dot-active"],
+braille-input::part(dot-active) {
+  border-color: var(--braille-dot-active);
+  background: var(--braille-dot-active);
+  color: Canvas;
+}
+
+[data-braille-ui-root] button:focus-visible,
+[data-braille-ui-root] select:focus-visible,
+braille-input::part(dot):focus-visible {
+  outline: 3px solid var(--braille-focus);
+  outline-offset: 3px;
+}
+
+[data-braille-ui-root] [hidden],
+braille-input [hidden] {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-braille-ui-root] *,
+  braille-input::part(container) {
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  [data-braille-ui-root] [part~="dot-active"],
+  braille-input::part(dot-active) {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
+  }
+}
