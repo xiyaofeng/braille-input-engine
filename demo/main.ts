@@ -13,7 +13,11 @@ const host = document.querySelector<HTMLElement>("#braille-ui");
 if (!output || !host) throw new Error("Demo fixture is incomplete.");
 
 const controller = createBrailleController();
-const editable = attachBrailleEditable(controller, output);
+// The demo has one fixed output target, so its controls must be able to commit
+// after taking focus away from the textarea.
+const editable = attachBrailleEditable(controller, output, {
+  activation: "always",
+});
 const keyboard = attachKeyboard(controller, document, { activation: "always" });
 const ui = createDefaultBrailleUI(controller, host, {
   lang: "zh-CN",
