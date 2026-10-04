@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createDefaultBrailleUI } from "../../src/ui/default-ui.js";
 import { createBrailleController } from "../../src/core/controller.js";
 import { attachKeyboard } from "../../src/adapters/keyboard.js";
+import { attachBrailleEditable } from "../../src/adapters/editable.js";
 import { BrailleInputException } from "../../src/core/types.js";
 
 describe("default UI", () => {
@@ -17,6 +18,46 @@ describe("default UI", () => {
     expect(controller.getState().pendingDots).toEqual([1]);
     expect(dot?.getAttribute("aria-pressed")).toBe("true");
     ui.detach();
+    controller.destroy();
+  });
+
+  it("commits to an always-active output target from UI controls", () => {
+    const controller = createBrailleController();
+    const output = document.createElement("textarea");
+    const host = document.createElement("div");
+    document.body.append(output, host);
+    const editable = attachBrailleEditable(controller, output, {
+      activation: "always",
+    });
+    const ui = createDefaultBrailleUI(controller, host, { lang: "zh-CN" });
+    let rejectFirstWrite = true;
+    output.addEventListener("beforeinput", (event) => {
+      if (!rejectFirstWrite) return;
+      rejectFirstWrite = false;
+      event.preventDefault();
+    });
+
+    for (const dot of [1, 2, 4])
+      host
+        .querySelector<HTMLButtonElement>(`[data-braille-dot="${dot}"]`)
+        ?.click();
+    host.querySelector<HTMLButtonElement>('[part~="commit-button"]')?.click();
+
+    expect(output.value).toBe("");
+    expect(controller.getState().awaitingRetry).toBe(true);
+    expect([...host.querySelectorAll("p")].at(-1)?.textContent).toContain(
+      "输出被拒绝",
+    );
+    host.querySelector<HTMLButtonElement>('[part~="retry-button"]')?.click();
+
+    expect(output.value).toBe("⠋");
+    expect(controller.getState().pendingDots).toEqual([]);
+    expect(controller.getState().awaitingRetry).toBe(false);
+    expect([...host.querySelectorAll("p")].at(-1)?.textContent).not.toContain(
+      "输出被拒绝",
+    );
+    ui.detach();
+    editable.detach();
     controller.destroy();
   });
 
