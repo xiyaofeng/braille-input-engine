@@ -1,5 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,26 +21,30 @@ const allowedLicenses = [
   "MPL-2.0",
   "Python-2.0",
 ];
-const output = execFileSync(
-  resolve(root, "node_modules/.bin/license-checker-rseidelsohn"),
-  [
-    "--start",
-    root,
-    "--json",
-    "--excludePrivatePackages",
-    "--onlyAllow",
-    allowedLicenses.join(";"),
-  ],
-  { cwd: root, encoding: "utf8" },
+const lockfile = JSON.parse(
+  await readFile(resolve(root, "package-lock.json"), "utf8"),
 );
-const inventory = JSON.parse(output);
+const inventoryEntries = [];
+for (const [packagePath, metadata] of Object.entries(lockfile.packages ?? {})) {
+  if (!packagePath.startsWith("node_modules/")) continue;
+  try {
+    await access(resolve(root, packagePath));
+  } catch {
+    continue;
+  }
+  inventoryEntries.push([
+    packagePath,
+    { ...metadata, path: resolve(root, packagePath) },
+  ]);
+}
+const inventory = Object.fromEntries(inventoryEntries);
 const missing = [];
 const disallowed = [];
 for (const [packageName, metadata] of Object.entries(inventory)) {
-  if (!metadata || typeof metadata.licenses !== "string")
+  if (!metadata || typeof metadata.license !== "string")
     missing.push(`${packageName}: license`);
-  else if (!allowedLicenses.includes(metadata.licenses))
-    disallowed.push(`${packageName}: ${metadata.licenses}`);
+  else if (!allowedLicenses.includes(metadata.license))
+    disallowed.push(`${packageName}: ${metadata.license}`);
   if (typeof metadata?.path !== "string") missing.push(`${packageName}: path`);
 }
 if (missing.length > 0 || disallowed.length > 0) {
@@ -57,7 +60,7 @@ const documentation = await readFile(
   "utf8",
 );
 for (const phrase of [
-  "license-checker-rseidelsohn",
+  "package-lock.json",
   "allowed license",
   "tooling dependencies",
 ]) {
