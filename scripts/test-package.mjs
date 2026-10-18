@@ -16,6 +16,8 @@ import vm from "node:vm";
 import { build } from "esbuild";
 import { chromium } from "playwright";
 
+import { testLifecyclePackage } from "./test-lifecycle-package.mjs";
+
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const packageJson = JSON.parse(
   await readFile(resolve(root, "package.json"), "utf8"),
@@ -215,36 +217,43 @@ if (!browserError || !/(HTMLElement|customElements|document|browser)/i.test(brow
     stdio: "inherit",
   });
 
-  const coreBundle = await build({
-    stdin: {
-      contents: `import { dotsToBraille } from ${JSON.stringify(`${packageJson.name}/core`)};
-export { dotsToBraille };`,
-      resolveDir: consumerRoot,
-      sourcefile: "core-consumer.mjs",
-    },
-    bundle: true,
-    format: "esm",
-    minify: true,
-    platform: "node",
-    treeShaking: true,
-    write: false,
-  });
-  const coreBundleText = coreBundle.outputFiles[0]?.text ?? "";
-  for (const forbidden of [
-    "HTMLElement",
-    "customElements",
-    "document",
-    "addEventListener",
-    "attachBrailleEditable",
-    "attachKeyboard",
-    "attachPointer",
-    "default-ui.css",
-  ]) {
-    if (coreBundleText.includes(forbidden))
-      throw new Error(
-        `Core bundler fixture included forbidden DOM/UI code: ${forbidden}`,
-      );
+  for (const [scenario, contents] of Object.entries({
+    unicode: `export { dotsToBraille } from "${packageJson.name}/core";`,
+    controller: `import { createBrailleController } from "${packageJson.name}/core";
+      const c = createBrailleController(); c.dispatch({type:"dot-down",dot:1,inputId:"consumer",source:"api"});
+      c.commitPending(); c.destroy(); export { c };`,
+  })) {
+    const coreBundle = await build({
+      stdin: {
+        contents,
+        resolveDir: consumerRoot,
+        sourcefile: "core-consumer.mjs",
+      },
+      bundle: true,
+      format: "esm",
+      minify: true,
+      platform: "node",
+      treeShaking: true,
+      write: false,
+    });
+    const coreBundleText = coreBundle.outputFiles[0]?.text ?? "";
+    for (const forbidden of [
+      "HTMLElement",
+      "customElements",
+      "document",
+      "addEventListener",
+      "attachBrailleEditable",
+      "attachKeyboard",
+      "attachPointer",
+      "default-ui.css",
+    ]) {
+      if (coreBundleText.includes(forbidden))
+        throw new Error(
+          `Core ${scenario} bundler fixture included forbidden DOM/UI code: ${forbidden}`,
+        );
+    }
   }
+  await testLifecyclePackage(packageRoot, temp);
 
   const cjsFixture = join(consumerRoot, "consumer.cjs");
   await writeFile(
@@ -264,40 +273,6 @@ let cjsException;
 try { root.extensionId("invalid"); } catch (error) { cjsException = { name: error.name, code: error.code, message: error.message }; }
 if (JSON.stringify(cjsException) !== JSON.stringify({ name: "BrailleInputException", code: "INVALID_CONFIG", message: "INVALID_CONFIG" }))
   throw new Error("CJS exception contract changed");
-globalThis.Element = class Element {};
-const fakeDocument = new EventTarget();
-fakeDocument.nodeType = 9;
-const key = (type, code) => {
-  const event = new Event(type, { cancelable: true });
-  Object.defineProperty(event, "code", { value: code });
-  Object.defineProperty(event, "repeat", { value: false });
-  return event;
-};
-const send = (code) => {
-  fakeDocument.dispatchEvent(key("keydown", code));
-  fakeDocument.dispatchEvent(key("keyup", code));
-};
-const keyController = root.createBrailleController();
-const keyAttachment = adapters.attachKeyboard(keyController, fakeDocument, { activation: "always" });
-send("KeyF");
-if (keyController.getState().pendingDots.join(",") !== "1") throw new Error("CJS KeyF behavior failed");
-send("Escape");
-if (keyController.getState().pendingDots.length !== 0) throw new Error("CJS Escape behavior failed");
-keyAttachment.detach();
-keyController.destroy();
-const numpadController = root.createBrailleController();
-const numpadAttachment = adapters.attachKeyboard(numpadController, fakeDocument, { activation: "always" });
-send("Numpad7");
-if (numpadController.getState().pendingDots.join(",") !== "1") throw new Error("CJS Numpad7 behavior failed");
-numpadAttachment.detach();
-numpadController.destroy();
-let cjsCommand;
-const commandController = root.createBrailleController({ onOutput: (action) => { cjsCommand = action; } });
-const commandAttachment = adapters.attachKeyboard(commandController, fakeDocument, { activation: "always" });
-fakeDocument.dispatchEvent(key("keydown", "Backspace"));
-if (cjsCommand?.kind !== "command" || cjsCommand.command !== "deleteBackward") throw new Error("CJS Backspace behavior failed");
-commandAttachment.detach();
-commandController.destroy();
 const { JSDOM } = require(${JSON.stringify(resolve(root, "node_modules/jsdom"))});
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
 Object.assign(globalThis, {
@@ -307,6 +282,35 @@ Object.assign(globalThis, {
   HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
   Node: dom.window.Node,
 });
+// Exercise a real Document event path; a Node EventTarget with nodeType=9
+// cannot establish DOM capture, composedPath or root lifecycle behavior.
+const keyboardDocument = dom.window.document;
+const key = (type, code) => new dom.window.KeyboardEvent(type, {code, bubbles:true, cancelable:true});
+const send = (code) => {
+  keyboardDocument.dispatchEvent(key("keydown", code));
+  keyboardDocument.dispatchEvent(key("keyup", code));
+};
+const keyController = root.createBrailleController();
+const keyAttachment = adapters.attachKeyboard(keyController, keyboardDocument, { activation: "always" });
+send("KeyF");
+if (keyController.getState().pendingDots.join(",") !== "1") throw new Error("CJS KeyF behavior failed");
+send("Escape");
+if (keyController.getState().pendingDots.length !== 0) throw new Error("CJS Escape behavior failed");
+keyAttachment.detach();
+keyController.destroy();
+const numpadController = root.createBrailleController();
+const numpadAttachment = adapters.attachKeyboard(numpadController, keyboardDocument, { activation: "always" });
+send("Numpad7");
+if (numpadController.getState().pendingDots.join(",") !== "1") throw new Error("CJS Numpad7 behavior failed");
+numpadAttachment.detach();
+numpadController.destroy();
+let cjsCommand;
+const commandController = root.createBrailleController({ onOutput: (action) => { cjsCommand = action; } });
+const commandAttachment = adapters.attachKeyboard(commandController, keyboardDocument, { activation: "always" });
+keyboardDocument.dispatchEvent(key("keydown", "Backspace"));
+if (cjsCommand?.kind !== "command" || cjsCommand.command !== "deleteBackward") throw new Error("CJS Backspace behavior failed");
+commandAttachment.detach();
+commandController.destroy();
 const editableTarget = dom.window.document.createElement("textarea");
 dom.window.document.body.append(editableTarget);
 editableTarget.focus();

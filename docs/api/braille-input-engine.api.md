@@ -59,10 +59,10 @@ export interface BrailleCommit {
 // @public (undocumented)
 export class BrailleController implements BrailleInputController, InternalController {
     constructor(options?: BrailleInputOptions);
+    // Warning: (ae-forgotten-export) The symbol "AdapterBatch" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    __handleActivationLost(reason: "activation-lost" | "hidden"): void;
-    // (undocumented)
-    __isInTransaction(): boolean;
+    __handleActivationLost(reason: "activation-lost" | "hidden", inputIds?: readonly string[] | (() => AdapterBatch)): void;
     // (undocumented)
     __reportDiagnostic(diagnostic: BrailleInputDiagnostic): void;
     // (undocumented)

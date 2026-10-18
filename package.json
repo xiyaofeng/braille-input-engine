@@ -191,6 +191,7 @@
     },
     "node-gyp": {
       "undici": "6.28.1"
-    }
+    },
+    "source-map-js": "1.2.2"
   }
 }

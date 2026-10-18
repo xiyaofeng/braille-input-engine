@@ -1,6 +1,4 @@
-import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { build as esbuild } from "esbuild";
 import { build as vite } from "vite";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -31,12 +29,10 @@ for (const format of ["es", "cjs"]) {
       },
       rollupOptions: {
         output: {
+          hoistTransitiveImports: false,
           entryFileNames: `[name].${extension}`,
           chunkFileNames: `chunks/[name]-[hash].${extension}`,
           assetFileNames: "[name][extname]",
-          manualChunks(id) {
-            if (id.includes("/src/adapters/")) return "adapters-runtime";
-          },
         },
       },
     },
@@ -59,59 +55,3 @@ await vite({
     },
   },
 });
-
-for (const format of ["es", "cjs"]) {
-  const extension = format === "es" ? "js" : "cjs";
-  const moduleFormat = format === "es" ? "esm" : "cjs";
-  await esbuild({
-    entryPoints: ["src/entries/core-adapters.ts"],
-    bundle: true,
-    format: moduleFormat,
-    platform: "browser",
-    target: "es2022",
-    minify: false,
-    sourcemap: "external",
-    outfile: `dist/c.${extension}`,
-    logLevel: "silent",
-  });
-
-  const coreExports = {
-    BrailleController: "a",
-    BrailleInputException: "b",
-    brailleToCodePoint: "c",
-    brailleToDots: "d",
-    createBrailleController: "e",
-    defaultControllerOptions: "f",
-    defaultKeyboardOptions: "g",
-    dotsToBraille: "h",
-    dotsToMask: "i",
-    extensionId: "j",
-    isBrailleDot: "k",
-    isExtensionId: "l",
-    isInputMode: "m",
-    isInputSource: "n",
-  };
-  const adapterExports = {
-    attachBrailleEditable: "o",
-    attachKeyboard: "p",
-    attachPointer: "q",
-    createActivationGroup: "r",
-    getActivationGroup: "s",
-    isEditableTargetAttached: "t",
-    validateBrailleEditableTarget: "u",
-  };
-  const target = `./c.${extension}`;
-  const wrappers = {
-    index: coreExports,
-    core: coreExports,
-    adapters: adapterExports,
-  };
-  for (const [entry, exports] of Object.entries(wrappers)) {
-    const names = Object.keys(exports);
-    const source =
-      format === "es"
-        ? `export { ${names.map((name) => `${exports[name]} as ${name}`).join(", ")} } from ${JSON.stringify(target)};\n`
-        : `const runtime = require(${JSON.stringify(target)});\nmodule.exports = { ${names.map((name) => `${name}: runtime.${exports[name]}`).join(", ")} };\n`;
-    await writeFile(`dist/${entry}.${extension}`, source);
-  }
-}

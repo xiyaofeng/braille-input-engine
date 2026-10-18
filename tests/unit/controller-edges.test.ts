@@ -628,12 +628,9 @@ describe("controller structural operations", () => {
     controller.destroy();
     asInternalController(controller).__handleActivationLost("hidden");
 
-    let callbackTransaction = false;
     let mutationRejected = false;
     const observed = createBrailleController({
       onStateChange: () => {
-        callbackTransaction =
-          asInternalController(observed).__isInTransaction();
         try {
           observed.enable();
         } catch (error) {
@@ -647,7 +644,6 @@ describe("controller structural operations", () => {
       inputId: "observed:1",
       source: "api",
     });
-    expect(callbackTransaction).toBe(true);
     expect(mutationRejected).toBe(true);
     observed.destroy();
 
