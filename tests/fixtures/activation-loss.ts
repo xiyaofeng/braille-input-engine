@@ -7,10 +7,10 @@ type Api = typeof Core & typeof Adapters;
 // modules in JSDOM, so its runtime dependencies must be local to the function.
 export async function activationLossCases(api?: Api) {
   if (!api) {
-    // @ts-expect-error Distribution URLs are served by the browser fixture.
-    const core = (await import("/dist/core.js")) as typeof Core;
-    // @ts-expect-error Distribution URLs are served by the browser fixture.
-    const adapters = (await import("/dist/adapters.js")) as typeof Adapters;
+    // Browser-only fallback: source DOM tests inject api before dist exists.
+    const load = (path: string) => import(/* @vite-ignore */ path);
+    const core = (await load("/dist/core.js")) as typeof Core;
+    const adapters = (await load("/dist/adapters.js")) as typeof Adapters;
     api = { ...core, ...adapters } as Api;
   }
   const results = [];

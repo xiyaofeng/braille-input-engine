@@ -6,10 +6,10 @@ type Api = typeof Core & typeof Adapters;
 // the unpacked package. Expected state is specified independently of the hub.
 export async function lifecycleCoordinationCases(api?: Api) {
   if (!api) {
-    const core = (await import("/dist/core.js" as string)) as typeof Core;
-    const adapters = (await import(
-      "/dist/adapters.js" as string
-    )) as typeof Adapters;
+    // Browser-only fallback: source DOM tests inject api before dist exists.
+    const load = (path: string) => import(/* @vite-ignore */ path);
+    const core = (await load("/dist/core.js")) as typeof Core;
+    const adapters = (await load("/dist/adapters.js")) as typeof Adapters;
     api = { ...core, ...adapters } as Api;
   }
   const failures: string[] = [];
