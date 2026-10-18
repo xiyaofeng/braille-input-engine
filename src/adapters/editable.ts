@@ -334,9 +334,14 @@ export function attachBrailleEditable(
       "The activation group has been destroyed.",
     );
   const focusMatchesActivationScope = (): boolean => {
-    const activeElement = ownerDocument.activeElement;
-    if (group) return group.isMember(activeElement);
-    return activeElement === target || target.contains(activeElement);
+    let activeElement = ownerDocument.activeElement;
+    // Document focus is retargeted to the host. Check the actual accessible
+    // focus again at each write, including after beforeinput host callbacks.
+    while (activeElement?.shadowRoot?.activeElement)
+      activeElement = activeElement.shadowRoot.activeElement;
+    return group
+      ? group.isMember(activeElement)
+      : target.contains(activeElement);
   };
   const syncFocusActivation = (): void => {
     if (currentActivation !== "focus") return;
@@ -380,9 +385,7 @@ export function attachBrailleEditable(
   const activationSatisfied = (): boolean => {
     if (currentActivation === "manual") return active;
     if (currentActivation === "always") return true;
-    const focused = focusMatchesActivationScope();
-    active = focused;
-    return focused;
+    return (active = focusMatchesActivationScope());
   };
 
   const transactionStillValid = (

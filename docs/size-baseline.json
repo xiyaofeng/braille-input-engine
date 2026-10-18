@@ -1,0 +1,6 @@
+{
+  "review": "ADR-0002",
+  "measurement": "reachable files, summed per-file gzip level 9 mtime 0; shared files counted once; UI includes CSS",
+  "maxUnreviewedGrowthBytes": 512,
+  "scenarios": { "core": 13572, "ui": 8566, "iife": 18280 }
+}

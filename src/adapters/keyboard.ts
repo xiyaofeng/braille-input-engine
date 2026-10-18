@@ -18,6 +18,13 @@ import {
   reportControllerDiagnostic,
 } from "../core/internal.js";
 import { sameArray } from "../core/utils.js";
+import {
+  applyActivationLosses,
+  observeDocumentLifecycle,
+  observeInputTermination,
+  leavesScope,
+  retainFocusRoot,
+} from "./lifecycle.js";
 import { getInternalActivationGroup } from "./activation.js";
 
 let attachmentCounter = 0;
@@ -181,17 +188,8 @@ function sameRecord<T>(
 }
 
 function scopeOwnerDocument(scope: KeyboardScope): Document {
-  if (scope.nodeType === 9) return scope as Document;
-  if (scope.nodeType === 11) {
-    const ownerDocument = (scope as ShadowRoot).ownerDocument;
-    if (!ownerDocument)
-      throw new BrailleInputException(
-        "INVALID_CONFIG",
-        "Keyboard scope has no owner document.",
-      );
-    return ownerDocument;
-  }
-  const ownerDocument = (scope as HTMLElement).ownerDocument;
+  const ownerDocument =
+    scope.nodeType === 9 ? (scope as Document) : scope.ownerDocument;
   if (!ownerDocument)
     throw new BrailleInputException(
       "INVALID_CONFIG",
@@ -200,27 +198,10 @@ function scopeOwnerDocument(scope: KeyboardScope): Document {
   return ownerDocument;
 }
 
-function eventInScope(
-  event: KeyboardEvent,
-  scope: KeyboardScope,
-  group: ReturnType<typeof getInternalActivationGroup>,
-): boolean {
-  const target = event.target as Node | null;
-  if (group) return group.isMember(target);
-  if (scope.nodeType === 9) return true;
-  if (scope.nodeType === 11) return event.composedPath().includes(scope);
-  return (
-    event.composedPath().includes(scope) ||
-    Boolean(target && (scope as HTMLElement).contains(target))
-  );
-}
-
-function isUIControl(event: KeyboardEvent): boolean {
-  const target = event.target;
+function isUIControl(target: Node | null): boolean {
   return Boolean(
-    target &&
-    target instanceof Element &&
-    target.closest("[data-braille-ui-control]"),
+    target?.nodeType === 1 &&
+    (target as Element).closest("[data-braille-ui-control]"),
   );
 }
 
@@ -258,7 +239,8 @@ export function attachKeyboard(
     );
   }
   const attachmentId = String(++attachmentCounter);
-  const tracked = new Set<string>();
+  const tracked = new Map<string, [inputId: string, observed: boolean]>();
+  let round = 0;
   let active = config.a !== "manual";
   let detached = false;
   let composing = false;
@@ -270,7 +252,7 @@ export function attachKeyboard(
   if (group) {
     groupDestroyDisposer = group.subscribeDestroyed(() => {
       active = false;
-      clearTracked("activation-lost");
+      return prepareLoss();
     });
   }
 
@@ -282,22 +264,18 @@ export function attachKeyboard(
   const report = (diagnostic: BrailleInputDiagnostic) =>
     reportControllerDiagnostic(controller, diagnostic);
 
-  function clearTracked(reason: "activation-lost" | "hidden"): void {
-    tracked.clear();
-    try {
-      asInternalController(controller).__handleActivationLost(reason);
-    } catch {
-      // Detachment is best effort after the controller itself is destroyed.
-    }
+  function clearTracked(): void {
+    applyActivationLosses([prepareLoss()]);
   }
 
-  function isActive(event?: KeyboardEvent): boolean {
+  function isActive(target: Node | null): boolean {
     if (detached || !asInternalController(controller).getState()["enabled"])
       return false;
     if (!active) return false;
     if (config.a === "manual") return active;
     if (config.a === "always") return true;
-    return Boolean(event && eventInScope(event, scope, group));
+    // Called only by this scope's listener: delivery already establishes scope.
+    return !group || group.isMember(target);
   }
 
   function shouldPrevent(candidate: boolean, handled: boolean): boolean {
@@ -348,6 +326,10 @@ export function attachKeyboard(
 
   function onKeyDown(event: Event): void {
     const keyboardEvent = event as KeyboardEvent;
+    // Admission and UI exclusion must see the same visible source, including
+    // controls retargeted to their shadow host at a Document listener.
+    const target = (keyboardEvent.composedPath()[0] ??
+      keyboardEvent.target) as Node | null;
     const code = keyboardEvent.code;
     const source: InputSource = isNumpadCode(code) ? "numpad" : "keyboard";
     const map = effective;
@@ -362,8 +344,8 @@ export function attachKeyboard(
       (isCommit && sourceEnabled) ||
       (command !== undefined && command !== null && sourceEnabled),
     );
-    if (isUIControl(keyboardEvent)) return;
-    if (!isActive(keyboardEvent) || !safeFilter(keyboardEvent)) return;
+    if (isUIControl(target)) return;
+    if (!isActive(target) || !safeFilter(keyboardEvent)) return;
     if (!candidate) return;
     if (config.p === "never" && !warnedNever) {
       warnedNever = true;
@@ -377,17 +359,18 @@ export function attachKeyboard(
 
     let handled = true;
     if (dot !== undefined) {
-      const inputId = `keyboard:${attachmentId}:${code}`;
+      const inputId =
+        tracked.get(code)?.[0] ?? `keyboard:${attachmentId}:${++round}:${code}`;
       if (keyboardEvent.repeat) {
         // A repeat without the original down is stale input. In particular,
         // do not create a controller pressed entry that the later keyup can
         // never release.
-        if (!tracked.has(inputId)) {
+        if (!tracked.has(code)) {
           if (shouldPrevent(candidate, handled)) keyboardEvent.preventDefault();
           return;
         }
       } else {
-        tracked.add(inputId);
+        tracked.set(code, [inputId, false]);
         dispatch({ type: "dot-down", dot, inputId, source });
       }
     } else if (isSpace) {
@@ -409,44 +392,55 @@ export function attachKeyboard(
     if (shouldPrevent(candidate, handled)) keyboardEvent.preventDefault();
   }
 
-  function onKeyUp(event: Event): void {
-    const keyboardEvent = event as KeyboardEvent;
-    const inputId = `keyboard:${attachmentId}:${keyboardEvent.code}`;
-    if (!tracked.delete(inputId)) return;
-    const dot = effective[keyboardEvent.code] as BrailleDot;
-    const source: InputSource = isNumpadCode(keyboardEvent.code)
-      ? "numpad"
-      : "keyboard";
-    dispatch(
-      safeFilter(keyboardEvent)
-        ? { type: "dot-up", dot, inputId, source }
-        : { type: "input-cancel", inputId, source },
-    );
-  }
-
-  function onCompositionStart(): void {
-    composing = true;
-    clearTracked("activation-lost");
-  }
-
-  function onCompositionEnd(): void {
-    composing = false;
-  }
-
-  function onBlur(): void {
-    clearTracked("activation-lost");
-  }
-
-  function onVisibilityChange(): void {
-    if (ownerDocument.visibilityState === "hidden") clearTracked("hidden");
-  }
+  const disposeKeyUp = observeInputTermination(
+    controller,
+    scope,
+    ["keyup"],
+    (event) => {
+      const keyboardEvent = event as KeyboardEvent;
+      const input = tracked.get(keyboardEvent.code);
+      if (!input) return;
+      const dot = effective[keyboardEvent.code] as BrailleDot;
+      const source: InputSource = isNumpadCode(keyboardEvent.code)
+        ? "numpad"
+        : "keyboard";
+      return () => {
+        if (tracked.get(keyboardEvent.code) === input)
+          tracked.delete(keyboardEvent.code);
+        return safeFilter(keyboardEvent)
+          ? { type: "dot-up", dot, inputId: input[0], source }
+          : { type: "input-cancel", inputId: input[0], source };
+      };
+    },
+  );
 
   scope.addEventListener("keydown", onKeyDown);
-  scope.addEventListener("keyup", onKeyUp);
-  ownerDocument.addEventListener("compositionstart", onCompositionStart, true);
-  ownerDocument.addEventListener("compositionend", onCompositionEnd, true);
-  ownerDocument.addEventListener("visibilitychange", onVisibilityChange);
-  ownerDocument.defaultView?.addEventListener("blur", onBlur);
+
+  function prepareLoss() {
+    const inputIds = [...tracked.values()].map(([id]) => id);
+    tracked.clear();
+    return [controller, inputIds] as const;
+  }
+  const releaseFocusRoot = retainFocusRoot(scope);
+  const disposeLifecycle = observeDocumentLifecycle(
+    controller,
+    ownerDocument,
+    (value) => {
+      if (value !== undefined) composing = value;
+      if (value !== false) return prepareLoss();
+    },
+    (from, to) => {
+      if (config.a === "focus" && leavesScope(from, to, scope, group))
+        return prepareLoss();
+    },
+  );
+
+  const disposeState = controller.subscribeState((state) => {
+    for (const [code, input] of tracked) {
+      if (state.pressedInputIds.includes(input[0])) input[1] = true;
+      else if (input[1]) tracked.delete(code);
+    }
+  });
 
   if (config.p === "never") {
     warnedNever = true;
@@ -466,7 +460,7 @@ export function attachKeyboard(
     deactivate(): void {
       if (detached || config.a !== "manual") return;
       active = false;
-      clearTracked("activation-lost");
+      clearTracked();
     },
     updateOptions(patch): void {
       if (detached) return;
@@ -488,12 +482,11 @@ export function attachKeyboard(
         );
       }
       config = next;
+      const nextEffective = effectiveMap(config);
+      const mapChanged = !sameRecord(effective, nextEffective);
+      effective = nextEffective;
       const activationChanged = previous.a !== next.a;
-      if (activationChanged) {
-        if (next.a === "manual") active = false;
-        else if (next.a === "always") active = true;
-        else active = true;
-      }
+      if (activationChanged) active = next.a !== "manual";
       if (
         previous.k !== next.k ||
         previous.n !== next.n ||
@@ -503,11 +496,9 @@ export function attachKeyboard(
         !sameRecord(previous.q, next.q) ||
         activationChanged
       ) {
-        clearTracked("activation-lost");
+        clearTracked();
       }
-      const nextEffective = effectiveMap(config);
-      if (!sameRecord(effective, nextEffective)) {
-        effective = nextEffective;
+      if (mapChanged) {
         for (const listener of [...subscribers]) listener(effective);
       }
       if (next.p === "never" && previous.p !== "never") {
@@ -523,22 +514,12 @@ export function attachKeyboard(
     detach(): void {
       if (detached) return;
       detached = true;
-      tracked.clear();
-      clearTracked("activation-lost");
+      clearTracked();
       scope.removeEventListener("keydown", onKeyDown);
-      scope.removeEventListener("keyup", onKeyUp);
-      ownerDocument.removeEventListener(
-        "compositionstart",
-        onCompositionStart,
-        true,
-      );
-      ownerDocument.removeEventListener(
-        "compositionend",
-        onCompositionEnd,
-        true,
-      );
-      ownerDocument.removeEventListener("visibilitychange", onVisibilityChange);
-      ownerDocument.defaultView?.removeEventListener("blur", onBlur);
+      disposeKeyUp();
+      disposeLifecycle();
+      releaseFocusRoot();
+      disposeState();
       groupToken?.();
       groupDestroyDisposer?.();
       subscribers.clear();
@@ -548,13 +529,20 @@ export function attachKeyboard(
     },
     subscribeEffectiveKeyMap(listener): () => void {
       if (detached) return () => {};
-      subscribers.add(listener);
-      listener(effective);
+      const registration = (map: Readonly<Record<string, BrailleDot>>) => {
+        try {
+          listener(map);
+        } catch {
+          /* Notifications cannot block later subscribers. */
+        }
+      };
+      subscribers.add(registration);
+      registration(effective);
       let disposed = false;
       return () => {
         if (disposed) return;
         disposed = true;
-        subscribers.delete(listener);
+        subscribers.delete(registration);
       };
     },
   };

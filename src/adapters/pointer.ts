@@ -6,7 +6,13 @@ import {
   type BrailleAttachment,
   type ActivationGroup,
 } from "../core/types.js";
-import { asInternalController } from "../core/internal.js";
+import {
+  applyActivationLosses,
+  observeInputTermination,
+  observeDocumentLifecycle,
+  leavesScope,
+  retainFocusRoot,
+} from "./lifecycle.js";
 import { getInternalActivationGroup } from "./activation.js";
 
 export interface PointerAdapterOptions {
@@ -17,6 +23,7 @@ export interface PointerAdapterOptions {
 }
 
 let pointerAttachmentCounter = 0;
+type TrackedPointer = [BrailleDot, string, HTMLElement, (0 | 1)?];
 
 function elementDot(element: Element): BrailleDot | null {
   const value = element.getAttribute("data-braille-dot");
@@ -63,31 +70,26 @@ export function attachPointer(
     );
   let active = activation !== "manual";
   let detached = false;
-  const attachmentId = String(++pointerAttachmentCounter);
-  const tracked = new Map<string, { dot: BrailleDot; pointerId: number }>();
-  const recentPointerClicks = new WeakMap<HTMLElement, number>();
+  const attachmentId = ++pointerAttachmentCounter;
+  let tracked = new Map<number, TrackedPointer>();
+  let round = 0;
   let groupToken: (() => void) | undefined;
   let groupDestroyDisposer: (() => void) | undefined;
   if (group) {
     groupToken = group.add(scope);
     groupDestroyDisposer = group.subscribeDestroyed(() => {
       active = false;
-      cancelAll();
+      return cancelAll(true);
     });
   }
 
-  const isActive = (event?: Event): boolean => {
-    if (detached || !asInternalController(controller).getState()["enabled"])
-      return false;
+  const isActive = (event: Event): boolean => {
+    if (detached || !controller.getState()["enabled"]) return false;
     if (!active) return false;
-    if (activation === "manual") return active;
-    if (activation === "always") return true;
-    if (group) return group.isMember(event?.target as Node | null);
-    return Boolean(
-      event &&
-      (event.composedPath?.().includes(scope) ||
-        scope.contains(event.target as Node)),
-    );
+    if (activation !== "focus") return true;
+    if (group) return group.isMember(event.composedPath()[0] as Node | null);
+    // Reaching this scope's listener already establishes local event ownership.
+    return true;
   };
 
   const findDot = (target: EventTarget | null): HTMLElement | null => {
@@ -118,61 +120,114 @@ export function attachPointer(
     }
   };
 
-  function cancelAll(): void {
-    for (const inputId of [...tracked.keys()]) {
-      dispatch({ type: "input-cancel", inputId, source: "pointer" });
-    }
-    tracked.clear();
+  function releaseCapture(element: HTMLElement, pointerId: number): void {
     try {
-      asInternalController(controller).__handleActivationLost(
-        "activation-lost",
-      );
+      element.releasePointerCapture?.(pointerId);
     } catch {
-      // The controller may already be destroyed.
+      // Capture may already have been released by the browser or host.
     }
   }
+
+  function cancelAll(defer?: boolean, inputs = tracked) {
+    if (inputs === tracked) tracked = new Map();
+    else
+      for (const [id, old] of inputs)
+        if (tracked.get(id) === old) tracked.delete(id);
+    const loss = [
+      controller,
+      Array.from(inputs, ([, input]) => input[1]),
+      () => {
+        for (const [pointerId, input] of inputs)
+          releaseCapture(input[2], pointerId);
+      },
+    ] as const;
+    if (defer) return loss;
+    applyActivationLosses([loss]);
+  }
+
+  const releaseFocusRoot = retainFocusRoot(scope);
+  const disposeLifecycle = observeDocumentLifecycle(
+    controller,
+    scope.ownerDocument,
+    (composing) => {
+      if (composing !== false) return cancelAll(true);
+    },
+    (from, to) => {
+      if (activation === "focus" && leavesScope(from, to, scope, group))
+        return cancelAll(true);
+    },
+  );
+
+  // Keep only live inputs. Reset, disable, mode changes and destroy can release
+  // controller inputs before the browser sends their terminal events.
+  const disposeState = controller.subscribeState((state) => {
+    for (const [pointerId, input] of tracked) {
+      if (state.pressedInputIds.includes(input[1])) {
+        input[3] = 1;
+      } else if (input[3]) {
+        tracked.delete(pointerId);
+        releaseCapture(input[2], pointerId);
+      }
+    }
+  });
 
   function onPointerDown(event: Event): void {
     const pointerEvent = event as PointerEvent;
     const element = findDot(pointerEvent.target);
-    if (!element || !isActive(pointerEvent) || !actionsAllowed()) return;
+    if (!element || !actionsAllowed() || !isActive(pointerEvent)) return;
     if (pointerEvent.pointerType === "mouse" && pointerEvent.button !== 0)
       return;
     const dot = elementDot(element);
     if (dot === null) return;
-    const inputId = `pointer:${attachmentId}:${pointerEvent.pointerId}:dot:${dot}`;
-    if (tracked.has(inputId)) return;
-    tracked.set(inputId, { dot, pointerId: pointerEvent.pointerId });
-    recentPointerClicks.set(element, Date.now());
-    element.setPointerCapture?.(pointerEvent.pointerId);
+    const inputId = `pointer:${attachmentId}:${pointerEvent.pointerId}:${++round}:dot:${dot}`;
+    if (tracked.has(pointerEvent.pointerId)) return;
+    tracked.set(pointerEvent.pointerId, [dot, inputId, element]);
+    try {
+      element.setPointerCapture?.(pointerEvent.pointerId);
+    } catch {
+      // A host may remove the element or release the pointer before capture.
+    }
     dispatch({ type: "dot-down", dot, inputId, source: "pointer" });
     pointerEvent.preventDefault();
   }
 
-  function onPointerUp(event: Event): void {
-    const pointerEvent = event as PointerEvent;
-    if (!actionsAllowed()) return;
-    const trackedEntry = [...tracked.entries()].find(
-      ([, value]) => value.pointerId === pointerEvent.pointerId,
-    );
-    if (!trackedEntry) return;
-    const [inputId, trackedInput] = trackedEntry;
-    tracked.delete(inputId);
-    dispatch({
-      type: "dot-up",
-      dot: trackedInput.dot,
-      inputId,
-      source: "pointer",
-    });
-    pointerEvent.preventDefault();
-  }
+  const disposeCancellation = observeInputTermination(
+    controller,
+    scope,
+    ["pointerup", "pointercancel", "lostpointercapture"],
+    (rawEvent) => {
+      const event = rawEvent as PointerEvent;
+      const input = tracked.get(event.pointerId);
+      if (!input) return;
+      // Snapshot every participating attachment before any guard or capture call.
+      const inputs = new Map(tracked);
+      return () => {
+        if (event.type === "pointerup" && actionsAllowed() && isActive(event)) {
+          if (tracked.get(event.pointerId) === input)
+            tracked.delete(event.pointerId);
+          event.preventDefault();
+          return {
+            type: "dot-up" as const,
+            dot: input[0],
+            inputId: input[1],
+            source: "pointer" as const,
+          };
+        }
+        return cancelAll(true, inputs);
+      };
+    },
+  );
 
   function onClick(event: Event): void {
-    const mouseEvent = event as MouseEvent;
+    const mouseEvent = event as PointerEvent;
+    // Physical gestures belong exclusively to down/up, including ones started
+    // before this attachment existed or while inactive. Pointer Events identify
+    // their clicks by pointerType; older MouseEvent clicks use detail > 0.
+    // Keyboard/AT and element.click() remain independent high-level activations.
+    // No elapsed-time window or retained pointer ID history is needed.
+    if (mouseEvent.pointerType || mouseEvent.detail > 0) return;
     const element = findDot(mouseEvent.target);
-    if (!element || !isActive(mouseEvent) || !actionsAllowed()) return;
-    const lastPointer = recentPointerClicks.get(element) ?? 0;
-    if (Date.now() - lastPointer < 500) return;
+    if (!element || !actionsAllowed() || !isActive(mouseEvent)) return;
     const dot = elementDot(element);
     if (dot === null) return;
     const inputId = `pointer:${attachmentId}:click:${dot}`;
@@ -181,9 +236,6 @@ export function attachPointer(
   }
 
   scope.addEventListener("pointerdown", onPointerDown);
-  scope.addEventListener("pointerup", onPointerUp);
-  scope.addEventListener("pointercancel", cancelAll);
-  scope.addEventListener("lostpointercapture", cancelAll);
   scope.addEventListener("click", onClick);
 
   return {
@@ -225,13 +277,13 @@ export function attachPointer(
       detached = true;
       cancelAll();
       scope.removeEventListener("pointerdown", onPointerDown);
-      scope.removeEventListener("pointerup", onPointerUp);
-      scope.removeEventListener("pointercancel", cancelAll);
-      scope.removeEventListener("lostpointercapture", cancelAll);
+      disposeCancellation();
+      disposeLifecycle();
+      releaseFocusRoot();
       scope.removeEventListener("click", onClick);
       groupToken?.();
       groupDestroyDisposer?.();
-      tracked.clear();
+      disposeState();
     },
   };
 }

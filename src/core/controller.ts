@@ -59,18 +59,18 @@ type OutputRequest =
   | {
       readonly kind: "commit";
       readonly triggerSource: InputSource;
-      readonly contributions: readonly InternalContribution[];
+      readonly contributions: InternalContribution[];
     }
   | {
       readonly kind: "space";
       readonly source: InputSource;
-      readonly contributions: readonly InternalContribution[];
+      readonly contributions: InternalContribution[];
     }
   | {
       readonly kind: "command";
       readonly command: EditorCommand;
       readonly source: InputSource;
-      readonly contributions: readonly InternalContribution[];
+      readonly contributions: InternalContribution[];
     };
 
 const sourceOrder: readonly InputSource[] = [
@@ -81,24 +81,34 @@ const sourceOrder: readonly InputSource[] = [
 ];
 
 function compareStrings(a: string, b: string): number {
-  const aPoints = Array.from(a, (value) => value.codePointAt(0) ?? 0);
-  const bPoints = Array.from(b, (value) => value.codePointAt(0) ?? 0);
-  const length = Math.min(aPoints.length, bPoints.length);
-  for (let index = 0; index < length; index += 1) {
-    const aPoint = aPoints[index] ?? 0;
-    const bPoint = bPoints[index] ?? 0;
-    if (aPoint !== bPoint) return aPoint - bPoint;
+  const left = [...a],
+    right = [...b];
+  for (let index = 0; index < left.length && index < right.length; index += 1) {
+    const difference =
+      (left[index]?.codePointAt(0) ?? 0) - (right[index]?.codePointAt(0) ?? 0);
+    if (difference) return difference;
   }
-  return aPoints.length - bPoints.length;
+  return left.length - right.length;
 }
 
 function compareSources(a: InputSource, b: InputSource): number {
   const aIndex = sourceOrder.indexOf(a);
   const bIndex = sourceOrder.indexOf(b);
-  if (aIndex >= 0 && bIndex >= 0) return aIndex - bIndex;
-  if (aIndex >= 0) return -1;
-  if (bIndex >= 0) return 1;
-  return compareStrings(a, b);
+  if (aIndex < 0) return bIndex < 0 ? compareStrings(a, b) : 1;
+  return bIndex < 0 ? -1 : aIndex - bIndex;
+}
+
+function contributionDots(
+  entries: readonly InternalContribution[],
+): BrailleDot[] {
+  return [...new Set(entries.map((entry) => entry.dot))].sort((a, b) => a - b);
+}
+function contributionSources(
+  entries: readonly InternalContribution[],
+): InputSource[] {
+  return [...new Set(entries.map((entry) => entry.source))].sort(
+    compareSources,
+  );
 }
 
 function freezeArray<T>(values: readonly T[]): readonly T[] {
@@ -196,13 +206,6 @@ export class BrailleController
   private structuralOperationDepth = 0;
   private structuralPhase = false;
   private structuralDiagnosticReentry = false;
-  private readonly initialStateCallback:
-    ((state: BrailleStateSnapshot) => void) | undefined;
-  private readonly initialOutputCallback:
-    | ((action: BrailleOutputAction, delivery: OutputDelivery) => void)
-    | undefined;
-  private readonly initialDiagnosticCallback:
-    ((diagnostic: BrailleInputDiagnostic) => void) | undefined;
 
   constructor(options: BrailleInputOptions = {}) {
     this._inputMode =
@@ -230,9 +233,10 @@ export class BrailleController
         "INVALID_CONFIG",
         "An output sink must provide a synchronous write(action) function.",
       );
-    this.initialStateCallback = options.onStateChange;
-    this.initialOutputCallback = options.onOutput;
-    this.initialDiagnosticCallback = options.onDiagnostic;
+    if (options.onStateChange) this.stateListeners.push(options.onStateChange);
+    if (options.onOutput) this.outputListeners.push(options.onOutput);
+    if (options.onDiagnostic)
+      this.diagnosticListeners.push(options.onDiagnostic);
 
     this.installBuiltIn("sequential", () => new SequentialStrategy());
     this.installBuiltIn("chord", () => new ChordStrategy());
@@ -253,8 +257,8 @@ export class BrailleController
       this.structuralPhase = true;
       this.activeStrategy.activate(this.lifecycleContext());
       activated = true;
-    } catch (error) {
-      this.reportStrategyFault(registration, "activate", error);
+    } catch {
+      this.reportStrategyFault(registration, "activate");
       if (!registration.builtIn) this.fallbackToSequential(activated);
     } finally {
       this.structuralPhase = false;
@@ -352,8 +356,8 @@ export class BrailleController
         this.structuralPhase = true;
         this.activeStrategy.activate(this.lifecycleContext());
         activated = true;
-      } catch (error) {
-        this.reportStrategyFault(next, "activate", error);
+      } catch {
+        this.reportStrategyFault(next, "activate");
         this.fallbackToSequential(activated);
       } finally {
         this.structuralPhase = false;
@@ -461,7 +465,8 @@ export class BrailleController
 
   subscribeState(listener: (state: BrailleStateSnapshot) => void): () => void {
     this.assertAlive();
-    this.stateListeners.push(listener);
+    const registration = (state: BrailleStateSnapshot) => listener(state);
+    this.stateListeners.push(registration);
     this.transactionDepth += 1;
     try {
       listener(this.currentState);
@@ -471,23 +476,29 @@ export class BrailleController
       this.transactionDepth -= 1;
     }
     this.drainQueue();
-    return this.makeDisposer(this.stateListeners, listener);
+    return this.makeDisposer(this.stateListeners, registration);
   }
 
   subscribeOutput(
     listener: (action: BrailleOutputAction, delivery: OutputDelivery) => void,
   ): () => void {
     this.assertAlive();
-    this.outputListeners.push(listener);
-    return this.makeDisposer(this.outputListeners, listener);
+    const registration = (
+      action: BrailleOutputAction,
+      delivery: OutputDelivery,
+    ) => listener(action, delivery);
+    this.outputListeners.push(registration);
+    return this.makeDisposer(this.outputListeners, registration);
   }
 
   subscribeDiagnostic(
     listener: (diagnostic: BrailleInputDiagnostic) => void,
   ): () => void {
     this.assertAlive();
-    this.diagnosticListeners.push(listener);
-    return this.makeDisposer(this.diagnosticListeners, listener);
+    const registration = (diagnostic: BrailleInputDiagnostic) =>
+      listener(diagnostic);
+    this.diagnosticListeners.push(registration);
+    return this.makeDisposer(this.diagnosticListeners, registration);
   }
 
   clearOutputSink(expected?: BrailleOutputSink): void {
@@ -542,18 +553,47 @@ export class BrailleController
     }
   }
 
-  __handleActivationLost(reason: "activation-lost" | "hidden"): void {
+  __handleActivationLost(
+    reason: "activation-lost" | "hidden",
+    inputIds?: readonly string[] | (() => import("./internal.js").AdapterBatch),
+  ): void {
     if (this._destroyed) return;
-    this.mutate(() => {
-      this.resetStrategy(reason);
-      this.pressed.clear();
-      if (this._inputMode === "chord") this.contributions = [];
-      this.publishState();
+    // Reserve this event's FIFO position before calling guards. Guard/notification
+    // reentry belongs after the old event, including when it arrives in a callback.
+    if (this.structuralPhase) this.enqueueOrRun(() => {});
+    let batch: import("./internal.js").AdapterBatch | undefined;
+    this.queue.push(() => {
+      if (!batch) return;
+      const [ids, actions, release] = batch;
+      this.transactionDepth++;
+      try {
+        if (ids !== undefined) {
+          for (const inputId of ids ?? [])
+            this.dispatchInternal({
+              type: "input-cancel",
+              inputId,
+              source: this.pressed.get(inputId)?.source ?? "pointer",
+            });
+          this.resetStrategy(reason);
+          if (!ids) this.pressed.clear();
+          if (this._inputMode === "chord" && !this._awaitingRetry)
+            this.contributions = [];
+          this.publishState();
+        }
+        for (const action of actions) this.dispatchInternal(action);
+      } finally {
+        release?.();
+        this.transactionDepth--;
+      }
     });
-  }
-
-  __isInTransaction(): boolean {
-    return this.transactionDepth > 0;
+    this.transactionDepth++;
+    try {
+      batch =
+        typeof inputIds === "function" ? inputIds() : [inputIds ?? null, []];
+    } finally {
+      this.transactionDepth--;
+      this.drainQueue();
+    }
   }
 
   private installBuiltIn(
@@ -645,12 +685,8 @@ export class BrailleController
   }
 
   private buildState(): BrailleStateSnapshot {
-    const dots = [
-      ...new Set(this.contributions.map((entry) => entry.dot)),
-    ].sort((a, b) => a - b);
-    const sources = [
-      ...new Set(this.contributions.map((entry) => entry.source)),
-    ].sort(compareSources);
+    const dots = contributionDots(this.contributions);
+    const sources = contributionSources(this.contributions);
     const pressedInputIds = [...this.pressed.keys()].sort(compareStrings);
     const previewChar = dots.length > 0 ? dotsToBraille(dots) : null;
     return Object.freeze({
@@ -672,29 +708,30 @@ export class BrailleController
     const previous = this.currentState;
     if (
       previous &&
-      previous.inputMode === next.inputMode &&
-      sameArray(previous.pendingDots, next.pendingDots) &&
-      sameArray(previous.pendingSources, next.pendingSources) &&
-      previous.previewChar === next.previewChar &&
-      sameArray(previous.pressedInputIds, next.pressedInputIds) &&
-      previous.chordInProgress === next.chordInProgress &&
-      previous["awaitingRetry"] === next["awaitingRetry"] &&
-      previous.outputSinkState === next.outputSinkState &&
-      previous["enabled"] === next["enabled"] &&
-      previous["destroyed"] === next["destroyed"]
+      Object.entries(next).every(([key, value]) => {
+        const old = previous[key as keyof BrailleStateSnapshot];
+        return Array.isArray(value)
+          ? sameArray(value, old as readonly unknown[])
+          : old === value;
+      })
     ) {
       return;
     }
     this.currentState = next;
-    const listeners = [...this.stateListeners];
-    if (this.initialStateCallback) listeners.unshift(this.initialStateCallback);
+    this.notifyListeners(this.stateListeners, next);
+  }
+
+  private notifyListeners<T extends readonly unknown[]>(
+    listeners: readonly ((...values: T) => void)[],
+    ...values: T
+  ): void {
     this.transactionDepth += 1;
     try {
-      for (const listener of listeners) {
+      for (const listener of [...listeners]) {
         try {
-          listener(next);
+          listener(...values);
         } catch {
-          // A notification listener cannot roll back core state or stop later listeners.
+          // Notification errors cannot stop later listeners or roll back state.
         }
       }
     } finally {
@@ -709,40 +746,12 @@ export class BrailleController
     const frozenAction = Object.isFrozen(action)
       ? action
       : freezeAction(action);
-    const listeners = [...this.outputListeners];
-    if (this.initialOutputCallback)
-      listeners.unshift(this.initialOutputCallback);
-    this.transactionDepth += 1;
-    try {
-      for (const listener of listeners) {
-        try {
-          listener(frozenAction, delivery);
-        } catch {
-          // Output is already committed or explicitly unhandled; listener errors are isolated.
-        }
-      }
-    } finally {
-      this.transactionDepth -= 1;
-    }
+    this.notifyListeners(this.outputListeners, frozenAction, delivery);
   }
 
   private emitDiagnostic(diagnostic: BrailleInputDiagnostic): void {
     const safe = freezeDiagnostic(diagnostic);
-    const listeners = [...this.diagnosticListeners];
-    if (this.initialDiagnosticCallback)
-      listeners.unshift(this.initialDiagnosticCallback);
-    this.transactionDepth += 1;
-    try {
-      for (const listener of listeners) {
-        try {
-          listener(safe);
-        } catch {
-          // Diagnostic listeners are never allowed to recurse into diagnostics.
-        }
-      }
-    } finally {
-      this.transactionDepth -= 1;
-    }
+    this.notifyListeners(this.diagnosticListeners, safe);
   }
 
   private dispatchInternal(action: BrailleInputAction): void {
@@ -798,20 +807,17 @@ export class BrailleController
   }
 
   private runStrategyAction(action: BrailleInputAction): void {
-    const original = this.contributions.map((entry) => ({ ...entry }));
-    let draft = original.map((entry) => ({ ...entry }));
+    // Strategy getters expose frozen projections; setters replace the whole
+    // normalized array. Retaining the old array is sufficient for rollback.
+    const original = this.contributions;
+    let draft = original;
     let request: OutputRequest | undefined;
     let sealed = false;
     const context: StrategyContext & { __toggleDots: boolean } = {
       __toggleDots: this._t,
       getState: () => this.buildState(),
       reportDiagnostic: (diagnostic) => this.emitDiagnostic(diagnostic),
-      getPendingContributions: () =>
-        freezeArray(
-          draft.map(({ id, dot, source }) =>
-            freezeContribution({ id, dot, source }),
-          ),
-        ),
+      getPendingContributions: () => freezeArray(draft.map(freezeContribution)),
       setPendingContributions: (entries) => {
         if (sealed)
           throw new BrailleInputException(
@@ -836,7 +842,7 @@ export class BrailleController
         request = {
           kind: "commit",
           triggerSource,
-          contributions: draft.map((entry) => ({ ...entry })),
+          contributions: draft,
         };
       },
       requestSpace: (source) => {
@@ -854,7 +860,7 @@ export class BrailleController
         request = {
           kind: "space",
           source,
-          contributions: draft.map((entry) => ({ ...entry })),
+          contributions: draft,
         };
       },
       requestCommand: (command, source) => {
@@ -873,7 +879,7 @@ export class BrailleController
           kind: "command",
           command,
           source,
-          contributions: draft.map((entry) => ({ ...entry })),
+          contributions: draft,
         };
       },
     };
@@ -881,10 +887,10 @@ export class BrailleController
     try {
       this.transactionDepth += 1;
       this.activeStrategy.handle(action, context);
-    } catch (error) {
+    } catch {
       this.transactionDepth -= 1;
       this.contributions = original;
-      this.reportStrategyFault(this.activeRegistration, "handle", error);
+      this.reportStrategyFault(this.activeRegistration, "handle");
       if (!this.activeRegistration.builtIn) this.fallbackToSequential();
       else this.publishState();
       return;
@@ -896,7 +902,7 @@ export class BrailleController
       this.publishState();
       return;
     }
-    this.contributions = request.contributions.map((entry) => ({ ...entry }));
+    this.contributions = request.contributions;
     this.executeRequest(request);
   }
 
@@ -919,12 +925,8 @@ export class BrailleController
     contributions: readonly InternalContribution[] = this.contributions,
   ): void {
     if (contributions.length === 0) return;
-    const dots = [...new Set(contributions.map((entry) => entry.dot))].sort(
-      (a, b) => a - b,
-    );
-    const sources = [
-      ...new Set(contributions.map((entry) => entry.source)),
-    ].sort(compareSources);
+    const dots = contributionDots(contributions);
+    const sources = contributionSources(contributions);
     const mask = dotsToMask(dots);
     const action: BrailleCommit = {
       kind: "braille",
@@ -1028,9 +1030,9 @@ export class BrailleController
     return result;
   }
 
-  private executeResetHook(reason: StrategyResetReason): void {
-    const original = this.contributions.map((entry) => ({ ...entry }));
-    let activeDraft = original.map((entry) => ({ ...entry }));
+  private resetStrategy(reason: StrategyResetReason): void {
+    const original = this.contributions;
+    let activeDraft = original;
     let activeFailed = false;
     const registrations =
       reason === "controller-reset"
@@ -1039,18 +1041,12 @@ export class BrailleController
     for (const registration of registrations) {
       if (registration._destroyed) continue;
       let draft =
-        registration === this.activeRegistration
-          ? activeDraft
-          : original.map((entry) => ({ ...entry }));
+        registration === this.activeRegistration ? activeDraft : original;
       const context: StrategyResetContext = {
         getState: () => this.buildState(),
         reportDiagnostic: (diagnostic) => this.emitDiagnostic(diagnostic),
         getPendingContributions: () =>
-          freezeArray(
-            draft.map(({ id, dot, source }) =>
-              freezeContribution({ id, dot, source }),
-            ),
-          ),
+          freezeArray(draft.map(freezeContribution)),
         setPendingContributions: (entries) => {
           draft = this.normalizeContributions(entries, original);
         },
@@ -1061,21 +1057,30 @@ export class BrailleController
           registration.strategy.reset(reason, context);
           succeeded = true;
         },
-        (error) => {
-          this.reportStrategyFault(registration, "reset", error);
+        () => {
+          this.reportStrategyFault(registration, "reset");
           if (registration === this.activeRegistration) activeFailed = true;
         },
       );
       if (registration === this.activeRegistration && succeeded)
         activeDraft = draft;
     }
-    this.contributions = activeDraft.map((entry) => ({ ...entry }));
+    // A rejected Cell is frozen; a successful lifecycle reset may only alter
+    // the live round. Strategy faults still use the documented discard/fallback.
+    const preserveRetry =
+      this._awaitingRetry &&
+      reason !== "cancel-pending" &&
+      reason !== "controller-reset";
+    this.contributions =
+      preserveRetry && !activeFailed ? original : activeDraft;
     if (activeFailed && !this.activeRegistration.builtIn)
       this.fallbackToSequential();
-  }
-
-  private resetStrategy(reason: StrategyResetReason): void {
-    this.executeResetHook(reason);
+    if (
+      this._inputMode === "chord" &&
+      !this._awaitingRetry &&
+      (reason === "disable" || reason === "configuration-change")
+    )
+      this.contributions = [];
   }
 
   private cancelPendingInternal(): void {
@@ -1155,7 +1160,6 @@ export class BrailleController
   private reportStrategyFault(
     registration: StrategyRegistration,
     phase: string,
-    error: unknown,
   ): void {
     registration.unavailable = !registration.builtIn;
     this.emitDiagnostic({
@@ -1163,7 +1167,6 @@ export class BrailleController
       code: "STRATEGY_ERROR",
       message: `Strategy ${phase} failed.`,
     });
-    void error;
   }
 
   private runHook(
@@ -1189,9 +1192,9 @@ export class BrailleController
   ): void {
     this.runHook(
       () => strategy[method](reason, this.lifecycleContext()),
-      (error) => {
+      () => {
         const registration = this.registrations.get(strategy.id as string);
-        if (registration) this.reportStrategyFault(registration, method, error);
+        if (registration) this.reportStrategyFault(registration, method);
       },
     );
   }

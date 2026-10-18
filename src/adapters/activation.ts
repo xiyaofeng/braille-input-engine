@@ -1,15 +1,21 @@
+import {
+  applyActivationLosses,
+  containsFocus,
+  retainFocusRoot,
+  type ActivationLoss,
+} from "./lifecycle.js";
 import { BrailleInputException, type ActivationGroup } from "../core/types.js";
 
 interface InternalActivationGroup extends ActivationGroup {
   isDestroyed(): boolean;
   isMember(element: Node | null): boolean;
-  subscribeDestroyed(listener: () => void): () => void;
+  subscribeDestroyed(listener: () => ActivationLoss | void): () => void;
 }
 
 class ActivationGroupImpl implements InternalActivationGroup {
   private readonly _ownerDocument: Document;
-  private readonly counts = new Map<HTMLElement, number>();
-  private readonly destroyListeners = new Set<() => void>();
+  private readonly counts = new Map<HTMLElement, [number, () => void]>();
+  private readonly destroyListeners = new Set<() => ActivationLoss | void>();
   private _destroyed = false;
 
   constructor(ownerDocument: Document) {
@@ -28,24 +34,35 @@ class ActivationGroupImpl implements InternalActivationGroup {
         "Activation group members must belong to the owner document.",
       );
     }
-    this.counts.set(element, (this.counts.get(element) ?? 0) + 1);
+    const entry: [number, () => void] = this.counts.get(element) ?? [
+      0,
+      retainFocusRoot(element),
+    ];
+    entry[0]++;
+    this.counts.set(element, entry);
     let disposed = false;
     return () => {
       if (disposed) return;
       disposed = true;
-      const count = this.counts.get(element) ?? 0;
-      if (count <= 1) this.counts.delete(element);
-      else this.counts.set(element, count - 1);
+      if (--entry[0] === 0) {
+        this.counts.delete(element);
+        entry[1]();
+      }
     };
   }
 
   destroy(): void {
     if (this._destroyed) return;
     this._destroyed = true;
+    for (const entry of this.counts.values()) entry[1]();
     this.counts.clear();
     const listeners = [...this.destroyListeners];
     this.destroyListeners.clear();
-    for (const listener of listeners) listener();
+    // Deactivate every member before notifying any controller or releasing capture.
+    const losses = listeners
+      .map((listener) => listener())
+      .filter(Boolean) as ActivationLoss[];
+    applyActivationLosses(losses);
   }
 
   isDestroyed(): boolean {
@@ -55,12 +72,12 @@ class ActivationGroupImpl implements InternalActivationGroup {
   isMember(element: Node | null): boolean {
     if (this._destroyed || !element) return false;
     for (const member of this.counts.keys()) {
-      if (member === element || member.contains(element)) return true;
+      if (containsFocus(member, element)) return true;
     }
     return false;
   }
 
-  subscribeDestroyed(listener: () => void): () => void {
+  subscribeDestroyed(listener: () => ActivationLoss | void): () => void {
     if (this._destroyed) {
       listener();
       return () => {};

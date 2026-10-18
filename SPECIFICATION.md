@@ -563,6 +563,8 @@ export class BrailleInputException extends Error {
 
 同步构造、配置、重复绑定和销毁后误用等调用方错误抛出 `BrailleInputException`，且不部分修改旧状态；运行期 sink/strategy/adapter 错误通过 `onDiagnostic` 和包装层 `braille-error` 报告，不跨浏览器事件边界抛出。Web Component 的非法枚举属性回退默认值并报告 warning。所有 public diagnostic/context 在 core 出口即按 allowlist 脱敏并冻结，不携带原始 `cause`、DOM target、KeyboardEvent 或编辑内容；DOM wrapper 只能进一步删字段，不能暴露内部异常对象。
 
+被拒绝的 Cell 已冻结，不再属于进行中的 Chord 或扩展策略轮次。activation-lost、hidden、默认 disable 和 configuration-change 仍通知策略 reset，但成功 reset 对 contributions 的修改不得改变待重试 Cell；控制器保留原 contribution ID、dot、source 和 ordinal，重试成功后释放 retry gate。显式放弃/清空继续按生命周期矩阵执行；策略 reset 故障继续按既有故障回退规则清空状态并报告诊断。
+
 ### 13.1 生命周期矩阵
 
 | 操作                                   | pressed inputs | Sequential pending | Chord in progress | awaiting retry | sink state | 输出                            |
@@ -577,6 +579,19 @@ export class BrailleInputException extends Error {
 | `destroy()`                            | 清空           | 清空               | 取消              | 放弃           | empty      | 最终 statechange 后停止所有事件 |
 
 默认模式切换策略是 `cancel`；未来可以增加 `modeSwitchBehavior: 'cancel' | 'reject'`，但不应在切换时隐式提交。library-managed Web Component 把默认 UI 与编辑目标注册为同一 `ActivationGroup`：用户在组内移动焦点时保存编辑目标和选择区，不把它视为目标解绑。独立组合 controller、keyboard、editable 和 UI 的宿主必须把同一个显式 group 传给各 attachment，或选择共同的 `HTMLElement` scope/manual activation；未提供 group 时各 attachment 不承诺识别 DOM 邻接关系。非文本按钮可在指针激活时防止夺取编辑焦点；键盘激活按钮时由选择区书签在写入前恢复。
+
+共享 ActivationGroup 销毁时先使全部成员 inactive 并收集 attachment-owned input IDs，再按 controller 执行一个完整失活操作：逐项 input-cancel、一次 strategy activation-lost reset 和旧轮次清理。状态/诊断回调排入的新 API/DOM 输入只能在该操作完成后执行；捕获释放使用旧追踪集合，旧终止事件不得影响新轮次。组内 keyboard 与 pointer 都只释放收集到的旧 input IDs，组外 pressed input 不被释放。多个 controller 各自完成失活操作；本契约不保证不同 controller 之间回调的全局原子性。
+
+keyboard/pointer 共用所属 Document 的生命周期运行时，按 controller 分批处理 window blur、document hidden、compositionstart/end。全局失活先收集该 controller 的全部旧追踪状态，再执行一次 controller-wide 清理；pointer-only 消费者同样适用。compositionstart 先将 keyboard 成员置为 composing，compositionend 同步解除过滤。核心自身不安装 DOM listener，API-only 消费者由宿主管理生命周期。
+
+focus activation 另按实际事件 root 注册 focusout/focusin：HTMLElement/ShadowRoot scope 与 group member token 各自保留 root 注册，最后一个拥有者移除监听器。开放 Shadow DOM 内部的焦点移动可能完全不到达 Document；跨 root 时 Document 的 target/relatedTarget 可能被重定向为 host，不能仅凭 Document target 判断退出。运行时使用已送达事件的 composedPath 原始可见节点；若 relatedTarget 仅为开放 shadow host，则用浏览器随后同步产生的 focusin 确认真实目标，再批量处理 scope/group 退出。组内移动保留状态，manual/always 不因局部失焦停用；同一 Document 的 group 可以包含不同可访问开放 root 的成员。scope/member 的 root 在注册时绑定，跨 root 迁移时宿主须先 detach/释放 token，再重新注册。独立伪造的模糊 focusout 而没有相应 focusin 不代表完整浏览器焦点转移。该机制不使用 setTimeout 或微任务，不增加不可见 closed root 或跨源 frame 访问能力。
+keyboard deactivate/detach/语义配置变化与 pointer 局部取消只释放本 attachment 收集的 ID；reset hook 与 Chord 当前 Cell 取消仍遵守原策略契约，不承诺按 attachment 分割一个 Cell。每个 down/up 轮次的 adapter ID 独立，避免保留的 Sequential contribution 与改键后的新输入冲突。配置的新键位在清理通知前生效。controller disable/configuration-change 必须取消未冻结的 Chord，不能在 enable 后复活；Sequential 和冻结 retry 保留规则不变。
+
+终止事件按实际修改状态的分支协调：pointercancel/lostpointercapture、pointerup 的 guard 拒绝/抛错/失活分支，以及 keyboard keyup 的 filter/IME/modifier 拒绝分支，均不可因事件名称属于“正常释放”而绕过批次。capture listener 只为本次派发重新标记；首个库 bubble listener 收集事件路径上的旧 attachment 输入快照，同 scope 按注册顺序、嵌套 scope 按冒泡顺序处理，后续 listener 不重复清理。再派发同一 Event 与嵌套不同 Event 各自独立；宿主在首个库 listener 之前阻止传播时，引擎无法观察该事件。首个 listener 一旦收集参与路径，该路径属于同一批次，不依赖后续宿主继续传播事件。
+
+每个有旧 tracked 输入的 pointerup/actionGuard 或 keyup/keyboardFilter 只求值一次；显式 pointercancel/lostpointercapture 和无 tracked 输入的终止事件不额外调用 guard。guard/filter 在预留了 FIFO 位置的 controller 事务中同步求值；其中 dispatch/commit/cancel 按普通回调规则排队，disable/reset/配置等结构性重入稳定拒绝。这明确改变了不同 attachment listener 之间的交错观察顺序：先取得该旧事件各成员的 guard 结果，再执行拒绝成员的取消，最后执行允许成员的正常 up，之后才执行回调排入的新输入。不得为收集批次重复调用 guard，也不得把所有 pointerup 一律当取消。terminal keyboardFilter 接收同一个原始 KeyboardEvent，求值位置为首个库 bubble listener；其 target/currentTarget/eventPhase 是该收集位置的浏览器视图，不再模拟后来每个 attachment listener 的位置。需要识别 attachment 的宿主应显式捕获自己的 scope，不能用 currentTarget 推断正在求值哪个成员；keydown filter 的调用位置不变。
+
+pointer 拒绝只释放拒绝 attachment 的旧 ID，允许成员的其他 pressed 输入保留；任一取消仍可取消共享的 live Chord Cell。pointer 失活批次只调用一次 strategy reset；keyboard bare input-cancel 保持原本不额外 reset 的规则。全允许时保持正常释放和输出：Chord 全部旧输入释放后提交一次，Sequential 不因 up 二次 toggle；冻结 retry 的内容、标志与实际重试结果一致。捕获释放仅使用旧追踪快照；状态/诊断/guard/capture 回调产生的新输入在旧批次后处理。直接调用同步完成，通知中的事件保持 FIFO，不作跨 controller 原子性承诺。旧 ID 的迟到终止事件无副作用；实体键码/pointerId 被新手势复用后人为伪造的旧事件没有可识别轮次，不能据此承诺任意乱序物理事件恢复。
 
 离开 activation scope 后旧选择书签失效，重新聚焦时以目标的当前选择区为准；写入前始终重新校验连接状态、可编辑状态和选择区归属。composition/modifier 过滤只阻止新的 down；已经追踪的 up/cancel 必须先释放。`compositionstart` 取消进行中的 Chord，但不清 Sequential pending。
 
@@ -796,7 +811,7 @@ export function attachKeyboard(
 
 没有 output sink 时，delivery 为 `unhandled`，动作仍通过通知发出；这是纯 Headless 事件集成模式。只有 delivery 为 `unhandled` 时，通知监听者才可以作为该动作的唯一非事务性写入者；控制器不等待或确认监听结果。
 
-控制器在 sink、状态订阅、输出订阅和诊断回调期间保持事务锁；这些普通回调中的 `dispatch()`、`commitPending()` 和 `cancelPending()` 重入按 FIFO 排队。strategy activate/deactivate/reset/destroy 属于 structural transaction phase：即使 hook 通过闭包调用 controller，dispatch/commit/cancel 与所有其他 mutator 也稳定拒绝并报告 `INVALID_ACTION`，绝不入 FIFO 或在 hook 返回后补发。配置、sink、strategy registry、reset、disable 和 destroy 等结构性变更在任何事务中同样稳定抛 `INVALID_ACTION`，不得穿透当前事务。成功 DOM sink 由 adapter 控制的关键事件相对顺序为 `beforeinput → mutation → input → statechange → subscribeOutput/onOutput → DOM output event`；浏览器还可能产生 selection、focus 或 MutationObserver 等其他观察。各类监听器按注册顺序调用，单个监听器抛错被隔离，不能阻止后续监听器或回滚 accepted 写入；diagnostic listener 自身抛错直接隔离并吞掉，避免递归 diagnostic。一次输入动作最多产生一个规范化 OutputAction。
+控制器在 sink、状态订阅、输出订阅和诊断回调期间保持事务锁；这些普通回调中的 `dispatch()`、`commitPending()` 和 `cancelPending()` 重入按 FIFO 排队。strategy activate/deactivate/reset/destroy 属于 structural transaction phase：即使 hook 通过闭包调用 controller，dispatch/commit/cancel 与所有其他 mutator 也稳定拒绝并报告 `INVALID_ACTION`，绝不入 FIFO 或在 hook 返回后补发。配置、sink、strategy registry、reset、disable 和 destroy 等结构性变更在任何事务中同样稳定抛 `INVALID_ACTION`，不得穿透当前事务。成功 DOM sink 由 adapter 控制的关键事件相对顺序为 `beforeinput → mutation → input → statechange → subscribeOutput/onOutput → DOM output event`；浏览器还可能产生 selection、focus 或 MutationObserver 等其他观察。各类监听器以每次注册的独立身份取消，重复调用 disposer 无副作用；构造回调先于后续注册，同函数重复订阅互不替代。通知开始时取得监听器快照，通知中取消从下次通知起生效，新增订阅从下次通知起接收（`subscribeState` 自身的立即快照除外）。各类监听器按注册顺序调用，单个监听器抛错被隔离，不能阻止后续监听器或回滚 accepted 写入；diagnostic listener 自身抛错直接隔离并吞掉，避免递归 diagnostic。一次输入动作最多产生一个规范化 OutputAction。
 
 sink 的未捕获异常不能越过浏览器事件监听边界；控制器一律捕获、报告 `OUTPUT_SINK_ERROR`、按 conflicted 处理并 fault sink，不推测异常发生在副作用前还是后。只有 sink 显式返回的 rejected Cell commit 才进入 awaiting-retry；U+2800 space、Text、SpaceIntent 或 Command rejected 只报告失败，用户可重新触发。Promise、thenable 或非法返回值同样直接按 conflicted 并 fault sink，不保留可重试 Cell。sink 必须自行保证“返回 rejected 时零副作用”，否则控制器无法检测已发生的写入，重试可能重复插入，属于集成方协议违规。
 
@@ -808,6 +823,7 @@ sink 的未捕获异常不能越过浏览器事件监听边界；控制器一律
 
 ```text
 已追踪 inputId 的 keyup/cancel（始终先释放）
+→ 默认 UI 控件及其子节点的新输入（交还控件自身处理）
 → disabled / inactive / scope 外的新输入
 → composition / modifier / keyboardFilter
 → Chord Test 独占捕获
@@ -820,6 +836,8 @@ sink 的未捕获异常不能越过浏览器事件监听边界；控制器一律
 
 Keyboard adapter 始终把有效 `commitKeys` 归一化为 `commit-request`，当前 strategy 决定处理或忽略；内置 Chord 除 awaiting-retry 外忽略。`spaceKey` 是独立保留键，不能同时出现在其他映射。Chord Test 也必须执行作用域、IME 和修饰键安全过滤，不能劫持系统快捷键。
 
+新 keydown 的 activation admission 与默认 UI 控件排除必须使用同一个事件原始可见来源（已送达事件的 `composedPath()[0]`，无路径时回退 `target`）。该来源为带 `data-braille-ui-control` 的元素或其同一 DOM tree 内子节点时，keyboard adapter 不派发新动作、不调用 keyboardFilter、不阻止默认行为；Document 监听看到的 Shadow DOM host 不能替代原始来源。此规则同样适用于 focus/manual/always 与全部 preventDefault 配置，不依赖宿主 stopPropagation。已追踪 keyup 仍按原终止规则释放，不能因其落在 UI 控件上而跳过。
+
 | `preventDefault` | 可执行语义                                                                                                    |
 | ---------------- | ------------------------------------------------------------------------------------------------------------- |
 | `handled`        | 仅阻止被引擎消费的配置键；mapped repeat 和 Chord 安全忽略键也算 handled                                       |
@@ -828,7 +846,7 @@ Keyboard adapter 始终把有效 `commitKeys` 归一化为 `commit-request`，�
 
 无论取值为何，scope 外、未映射、IME composition、带 Ctrl/Meta/Alt/AltGraph 的新 down 和系统快捷键都不得被阻止。已追踪 keyup 只为释放状态，不因此额外阻止默认行为。adapter 在初始配置为 `never` 或从其他值切换到 `never` 时各报告一次稳定 warning；默认 UI/Web Component 若连接则把它呈现为可感知警告，纯 headless 集成只承诺 diagnostic 和文档，不虚构 UI。
 
-`keyboardFilter(event)` 返回 `true` 才继续处理；`false` 表示 pass-through 且不得 preventDefault。filter 抛错时报告 adapter diagnostic 并按 `false` 处理。已追踪 inputId 的 release 永远先于 filter。默认 `focus` activation 要么使用 `HTMLElement` scope 本身，要么使用显式 `activationGroup`，并以事件 `composedPath()` 或所属 root 的 active element 是否位于有效 member 内判断；`Document`/`ShadowRoot` scope 若没有 group，必须显式选择 `manual` 或 `always`，否则初始化即 `INVALID_CONFIG`，从而把页面/root 级捕获变成明确 opt-in。group 只接受同一 ownerDocument 的 HTMLElement；editable target、UI host 和 `HTMLElement` keyboard scope 各自自动取得一个 registration token 并在 detach 时释放，`Document`/`ShadowRoot` 本身绝不传给 `add()`，使用 group 时由宿主或其他 attachment 注册其中的实际 HTMLElement member。对同一元素的每次 `add()` 都产生独立且幂等的 token，只有最后一个 token 释放或 group destroy 后才移除该 member，避免一个 attachment 的 detach 破坏另一个 attachment 的 activation。`activationGroup` 是 construction-only option，已从通用 `updateOptions()` patch 类型中排除；JavaScript 运行期传入该字段必须以 `INVALID_CONFIG` 零副作用拒绝。group destroy 同步使相关 focus attachment inactive、清 pressed/取消 Chord、使书签失效，之后 `add()` 抛 `INVALID_ACTION`；恢复必须 detach 并用新的 live group 重新 attach，不能热迁组。manual 仅由 attachment activate/deactivate 控制；always 在 attachment 存续且 controller enabled 时有效。非 manual 模式调用 activate/deactivate 为幂等 no-op。library-managed Web Component 创建并拥有一个 group 来协调已知 target 与内部 UI，不把任意同 root 元素纳入范围；独立集成若共享 group，由宿主负责最终 `destroy()`。
+`keyboardFilter(event)` 返回 `true` 才继续处理；`false` 表示 pass-through 且不得 preventDefault。filter 抛错时报告 adapter diagnostic 并按 `false` 处理。已追踪 keyup 先移除该 attachment 的旧 tracking，再求值 filter；filter 拒绝不能跳过 controller 的释放。controller 在本次终止批次收集完结果后，先执行拒绝成员的 input-cancel，再执行允许成员的 dot-up（见 13.1）；不承诺 filter 回调已观察到释放后的 controller 状态。默认 `focus` activation 要么使用 `HTMLElement` scope 本身，要么使用显式 `activationGroup`，并以事件 `composedPath()` 或所属 root 的 active element 是否位于有效 member 内判断；`Document`/`ShadowRoot` scope 若没有 group，必须显式选择 `manual` 或 `always`，否则初始化即 `INVALID_CONFIG`，从而把页面/root 级捕获变成明确 opt-in。group 只接受同一 ownerDocument 的 HTMLElement；editable target、UI host 和 `HTMLElement` keyboard scope 各自自动取得一个 registration token 并在 detach 时释放，`Document`/`ShadowRoot` 本身绝不传给 `add()`，使用 group 时由宿主或其他 attachment 注册其中的实际 HTMLElement member。对同一元素的每次 `add()` 都产生独立且幂等的 token，只有最后一个 token 释放或 group destroy 后才移除该 member，避免一个 attachment 的 detach 破坏另一个 attachment 的 activation。`activationGroup` 是 construction-only option，已从通用 `updateOptions()` patch 类型中排除；JavaScript 运行期传入该字段必须以 `INVALID_CONFIG` 零副作用拒绝。group destroy 同步使相关 focus attachment inactive、清 pressed/取消 Chord、使书签失效，之后 `add()` 抛 `INVALID_ACTION`；恢复必须 detach 并用新的 live group 重新 attach，不能热迁组。manual 仅由 attachment activate/deactivate 控制；always 在 attachment 存续且 controller enabled 时有效。非 manual 模式调用 activate/deactivate 为幂等 no-op。library-managed Web Component 创建并拥有一个 group 来协调已知 target 与内部 UI，不把任意同 root 元素纳入范围；独立集成若共享 group，由宿主负责最终 `destroy()`。
 
 ## 15. DOM 事件
 
@@ -945,6 +963,10 @@ button.addEventListener("pointercancel", (event) => {
 实际 adapter 对 mouse 只接受 `button===0`；对 touch 接受所有活动 `pointerId`，不得以 `isPrimary` 过滤第二个及后续触点；pen 的按钮策略必须记录在兼容矩阵。有效 down 后 capture，并统一处理 `pointerup`、`pointercancel` 和 `lostpointercapture`；正常 up 已释放的 ID 随后收到 lost capture 时必须忽略。Sequential 的 cancel 只释放 pressed input，不回滚已经发生的 toggle；Chord 任一仍活动 pointer cancel 默认取消整轮且不提交。
 
 点按钮还必须支持原生按钮的键盘/辅助技术 `click`：没有对应活动 pointer 的 click 合成一次唯一 down/up；真实 pointer 后续 click 被去重，避免 pointerdown 与 click 双重 toggle。Chord 和多点触控不得成为唯一可完成路径，Sequential 的标准按钮激活必须覆盖全部核心任务。
+
+物理指针手势只由 `pointerdown`/`pointerup` 处理：带非空 `pointerType` 的 click（旧 MouseEvent 的 `detail > 0`）不再产生输入，包括 attachment 重建或失活期间开始的手势。独立的原生键盘/辅助技术激活及 `element.click()` 仍合成一次 down/up，不使用时间窗，也不保存已结束手势的 ID。无指针来源的独立 click 可在刚发生指针输入后立即执行。
+
+指针 attachment 在取消按压输入时，在同一个 controller FIFO 操作内先为其跟踪的每个 ID 派发 `input-cancel`，再通知当前策略 `reset("activation-lost")`，使扩展策略可按生命周期契约清理 controller-owned contribution。取消过程中的状态订阅或策略诊断回调排入的新输入必须在所有释放与失活重置完成后执行，避免旧轮次重置清空新轮次 contribution。该过程只能释放本 attachment 持有的 pressed ID；同一 controller 上其他 attachment 的 pressed 输入保持独立。controller FIFO 队列中尚待处理的 down 不能因旧状态快照暂时缺少其 ID 而被适配器丢弃；适配器在看到该 ID 进入 pressed 状态后，才以之后缺失的快照确认它已被 controller 释放。
 
 核心不依赖 DOM 结构、类名、颜色、尺寸或文案。默认 UI 提供插槽、稳定 token、CSS 变量和可替换文案；结构需要完全不同则直接使用核心 API。
 
@@ -1255,7 +1277,7 @@ Playwright 使用锁定的自带浏览器 revision 并记录 revision，用于 M
 - editable attach 在已有 pending/retry 时拒绝；public detach 取消当前 Cell 后释放 sink，不能把旧 Cell 留给下一目标。
 - 点击默认 UI 后仍能恢复原编辑目标和选择区。
 - destroy、attachment detach 和所有 disposer 幂等；disconnect/reconnect 后无残留监听、目标占用或延迟输出。
-- 任意 down/up/cancel/blur/hidden/disable/reject 序列均不产生 stuck input、非法点位或重复输出。
+- 模型验证 down/up/cancel/blur/hidden/disable/reject 的状态规则；DOM 传播、重定向、真实焦点与 capture 必须另由对应浏览器测试验证，不能由性质测试或事件同名推断。实际已验证的分支、root、成员组合与未验证范围见 `docs/lifecycle-coverage.md`。
 
 ### 22.7 编辑目标
 
@@ -1320,7 +1342,7 @@ Playwright 使用锁定的自带浏览器 revision 并记录 revision，用于 M
 13. **AC-13** 禁用、失焦、切换模式或销毁后无卡住状态。
 14. **AC-14** 引擎不包含语言、数字、数学或音乐盲文翻译。
 15. **AC-15** 文档和 UI 明确区分 SDFJKL 惯例与本项目 Sequential/Numpad 设计。
-16. **AC-16** 按 25.2 固定口径，core + 无样式 adapters ≤10 KB，默认 UI JS+CSS ≤20 KB，完整 IIFE ≤30 KB，且无运行时依赖；预算变更必须先有基准证据和 ADR，不能静默取消门禁。
+16. **AC-16** 按 25.2 固定口径，core + 无样式 adapters ≤16 KiB，默认 UI JS+CSS ≤20 KiB，完整 IIFE ≤30 KiB，且无运行时依赖；预算变更必须先有基准证据和 ADR，不能静默取消门禁。
 17. **AC-17** 所有适配器通过统一 `BrailleInputAction` 进入当前策略，不在 UI 中复制模式判断。
 18. **AC-18** 一个控制器最多有一个 output sink；合规 accepted/rejected/unhandled 分支不会因回调、DOM 事件或自动适配器重复写入，conflicted 明确停止补写并要求人工检查。
 19. **AC-19** U+2800 与普通 Braille Cell 进入同一输出流，ASCII 空格和 space intent 有独立类型。
@@ -1422,7 +1444,8 @@ npm run verify:release-evidence
 - 默认 UI 样式提供独立 CSS 入口，以 host selector、公开 `::part()` 与 CSS 变量从 Shadow Root 外部应用；默认生产路径不运行时注入内联 `<style>`、`style` 属性或 CSS 字符串。严格 CSP fixture 只允许批准的外部 stylesheet，不启用 `unsafe-inline`。
 - 不使用 `eval`、`new Function` 或内联脚本；不依赖远程 CDN；运行时依赖为零。
 - 生成外部 source map 并随本地/GitHub Release 资产提供，便于自行部署者调试；map 不得包含密钥、绝对本地路径或 tarball 外的私有文件，并纳入 secret/path 扫描。
-- 体积由版本控制的 canonical consumer fixtures 和 pinned minifier 测量；gzip 使用固定 level 9、mtime 0，shared chunk 在每个消费场景只计一次，UI 预算包含 CSS。core + 无样式 adapters ≤10 KB，默认 UI JS+CSS ≤20 KB，完整 IIFE ≤30 KB（均 minified + gzip，排除 map/`.d.ts`）。
+- 体积由版本控制的 canonical consumer fixtures 和 pinned minifier 测量；gzip 使用固定 level 9、mtime 0，shared chunk 在每个消费场景只计一次，UI 预算包含 CSS。core + 无样式 adapters ≤16 KiB，默认 UI JS+CSS ≤20 KiB，完整 IIFE ≤30 KiB（均 minified + gzip，排除 map/`.d.ts`）。
+- 体积调整依据见 `docs/adr/0002-lifecycle-runtime-and-size.md`；`docs/size-baseline.json` 记录审查基线，单场景较基线增长超过 512 B 时须复核并更新证据。`scripts/measure-consumers.mjs` 补充 Unicode、实际 controller、keyboard、pointer、全 adapters、controller+UI 和 IIFE 的 bundler/直接加载口径；补充口径不能替代上述可达文件硬门禁。
 - 版本控制的 `docs/performance-contract.json` 固定性能测试的预热次数、轮数、每轮动作数和阶段。每个场景先预热 200 次，再独立执行 5 轮、每轮 1,000 次动作；5 轮都必须满足 action→state subscription p95 ≤5 ms、action→默认 UI next paint p95 ≤50 ms。Long Task 只在无第三方脚本/扩展的隔离 fixture 中归因：动作 burst 期间不得出现由 library task 包含的 >50 ms entry。重复 100 次 attach/detach 与 connect/disconnect 后，instrumented listener/target registry 回到基线且无延迟输出。测试生成的设备、OS 和浏览器明细属于本地运行记录，不进入公开源码；GitHub CI 仍在每次运行中执行相同门禁并保留该次 workflow 日志与产物。样本口径或预算变更需 ADR。
 - `build:demo` 输出可直接放入任意静态服务的 `dist/demo/`；默认不配置 GitHub Pages、CDN、后端或托管账号。`DEPLOYMENT.md` 至少说明 `git clone`、`npm ci`、`npm run build`、部署 `dist/demo/` 和直接从本地 tarball 安装的方法。
 
