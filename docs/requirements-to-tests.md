@@ -43,6 +43,8 @@ pass.
 
 ## P1/P2 regression index
 
+`AUDIT-UI-01`: `tests/browser/ui-output-pointer.spec.ts` uses native Playwright mouse clicks (Chromium/Firefox/WebKit) and touchscreen taps (Chromium/WebKit) across source, standalone UI, browser component, auto-register and IIFE entries. Each gesture checks commit/retry/backspace writes and selection, clear/discard, real external focus, and beforeinput cancellation/focus loss. Existing keyboard and editable-focus suites retain keyboard activation and open-root transaction coverage.
+
 | Finding       | Regression evidence                                                                                                                                                                                                                                              |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | P1-01         | `tests/dom/ui.test.ts`: sequential six-key rejection, simultaneous support, repeat handling                                                                                                                                                                      |

@@ -4,6 +4,9 @@ All notable changes are recorded here. The initial alpha is not stable and is no
 
 ## Unreleased
 
+- Preserve native touch activation of commit, retry, backspace, clear and discard in WebKit by cancelling mousedown rather than pointerdown; retain focus and write guards across mouse and touch.
+- Preserve focus and editable selection during native pointer activation of default UI cell actions, including WebKit commit, retry, backspace, clear and discard. Keep keyboard activation and external-focus write guards intact.
+
 - Resolve editable focus through accessible open ShadowRoots before delivery and after beforeinput; preserve exact activation-group membership and rejected/conflicted transaction protections.
 
 - Resolve keyboard admission and UI-control exclusion from the same visible event source, preserving default UI actions inside open Shadow DOM with Document listeners. Keep ordinary group input and already tracked key releases working.

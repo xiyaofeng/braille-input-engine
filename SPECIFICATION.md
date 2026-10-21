@@ -578,7 +578,7 @@ export class BrailleInputException extends Error {
 | 模式切换                               | 清空           | 默认取消           | 取消              | 放弃           | 不变       | 无                              |
 | `destroy()`                            | 清空           | 清空               | 取消              | 放弃           | empty      | 最终 statechange 后停止所有事件 |
 
-默认模式切换策略是 `cancel`；未来可以增加 `modeSwitchBehavior: 'cancel' | 'reject'`，但不应在切换时隐式提交。library-managed Web Component 把默认 UI 与编辑目标注册为同一 `ActivationGroup`：用户在组内移动焦点时保存编辑目标和选择区，不把它视为目标解绑。独立组合 controller、keyboard、editable 和 UI 的宿主必须把同一个显式 group 传给各 attachment，或选择共同的 `HTMLElement` scope/manual activation；未提供 group 时各 attachment 不承诺识别 DOM 邻接关系。非文本按钮可在指针激活时防止夺取编辑焦点；键盘激活按钮时由选择区书签在写入前恢复。
+默认模式切换策略是 `cancel`；未来可以增加 `modeSwitchBehavior: 'cancel' | 'reject'`，但不应在切换时隐式提交。library-managed Web Component 把默认 UI 与编辑目标注册为同一 `ActivationGroup`：用户在组内移动焦点时保存编辑目标和选择区，不把它视为目标解绑。独立组合 controller、keyboard、editable 和 UI 的宿主必须把同一个显式 group 传给各 attachment，或选择共同的 `HTMLElement` scope/manual activation；未提供 group 时各 attachment 不承诺识别 DOM 邻接关系。默认 UI 的输出/清除按钮通过取消主键 `mousedown` 防止夺取编辑焦点，保留触摸的原生 `click` 激活链，不能通过取消触摸 `pointerdown` 保留焦点；键盘激活按钮时由选择区书签在写入前恢复。
 
 共享 ActivationGroup 销毁时先使全部成员 inactive 并收集 attachment-owned input IDs，再按 controller 执行一个完整失活操作：逐项 input-cancel、一次 strategy activation-lost reset 和旧轮次清理。状态/诊断回调排入的新 API/DOM 输入只能在该操作完成后执行；捕获释放使用旧追踪集合，旧终止事件不得影响新轮次。组内 keyboard 与 pointer 都只释放收集到的旧 input IDs，组外 pressed input 不被释放。多个 controller 各自完成失活操作；本契约不保证不同 controller 之间回调的全局原子性。
 
