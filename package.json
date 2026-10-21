@@ -154,7 +154,8 @@
     "pack:release": "node scripts/pack-release.mjs",
     "verify:release-asset": "node scripts/verify-release-asset.mjs",
     "verify:release-evidence": "node scripts/verify-release-evidence.mjs",
-    "ci:auto": "node scripts/ci-auto.mjs"
+    "ci:auto": "node scripts/ci-auto.mjs",
+    "test:release-asset:negative": "node scripts/test-release-asset-negative.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
@@ -177,7 +178,7 @@
     "terser": "5.44.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.67.0",
-    "vite": "8.2.2",
+    "vite": "8.2.4",
     "vitest": "4.1.11"
   },
   "overrides": {

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { sourceTreeHash as hashSourceTree } from "./source-tree-hash.mjs";
 import {
   copyFile,
   mkdir,
@@ -30,11 +31,7 @@ const commit = execFileSync("git", ["rev-parse", "--verify", "HEAD^{commit}"], {
 }).trim();
 if (!/^[0-9a-f]{40}$/.test(commit))
   throw new Error("pack:release requires an exact commit.");
-const sourceTreeHash = createHash("sha256")
-  .update(
-    execFileSync("git", ["archive", "--format=tar", commit], { cwd: root }),
-  )
-  .digest("hex");
+const sourceTreeHash = await hashSourceTree(root, commit);
 const lockfileHash = createHash("sha256")
   .update(await readFile(resolve(root, "package-lock.json")))
   .digest("hex");

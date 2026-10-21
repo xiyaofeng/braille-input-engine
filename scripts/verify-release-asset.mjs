@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { sourceTreeHash as hashSourceTree } from "./source-tree-hash.mjs";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { verifyReleaseDemo } from "./verify-release-demo.mjs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,11 +37,7 @@ if (status)
   throw new Error(
     "Release verification requires the same clean worktree used to build the manifest.",
   );
-const sourceTreeHash = createHash("sha256")
-  .update(
-    execFileSync("git", ["archive", "--format=tar", commit], { cwd: root }),
-  )
-  .digest("hex");
+const sourceTreeHash = await hashSourceTree(root, commit);
 const lockfileHash = createHash("sha256")
   .update(await readFile(resolve(root, "package-lock.json")))
   .digest("hex");
@@ -106,14 +104,34 @@ try {
   ];
   for (const relative of expectedFiles)
     await readFile(join(packageRoot, relative));
-  for (const target of Object.values(packedPackage.exports)) {
-    if (typeof target === "string") {
-      await readFile(join(packageRoot, target.replace(/^\.\//, "")));
-      continue;
-    }
-    if (typeof target === "object" && typeof target.types === "string")
-      await readFile(join(packageRoot, target.types.replace(/^\.\//, "")));
+  function exportTargets(value) {
+    if (typeof value === "string") return [value];
+    if (!value || typeof value !== "object") return [];
+    return Object.values(value).flatMap(exportTargets);
   }
+  for (const target of Object.values(packedPackage.exports)) {
+    const targets = exportTargets(target);
+    if (!targets.length)
+      throw new Error("Release package has an empty export.");
+    for (const target of targets) await readFile(join(packageRoot, target));
+  }
+
+  // Exercise this exact release archive, never a new npm pack or workspace dist.
+  execFileSync(process.execPath, [resolve(root, "scripts/test-package.mjs")], {
+    cwd: root,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      BRAILLE_PACKAGE_TARBALL: packageArchive,
+      BRAILLE_PACKAGE_EXPECTED_NODE_VERSION: process.versions.node,
+      BRAILLE_PACKAGE_TYPESCRIPT_VERSION: pkg.devDependencies.typescript,
+      BRAILLE_PACKAGE_TYPESCRIPT_BIN: resolve(
+        root,
+        "node_modules/typescript/bin/tsc",
+      ),
+      BRAILLE_PACKAGE_MATRIX_ID: "exact-release-asset",
+    },
+  });
 
   const esm = await import(join(packageRoot, "dist/index.js"));
   if (esm.dotsToBraille([1, 2, 4]) !== "⠋")
@@ -142,21 +160,10 @@ try {
     throw new Error("Release SSR smoke failed.");
   controller.destroy();
 
-  execFileSync("unzip", ["-t", resolve(releaseDir, demoName)], {
-    stdio: "ignore",
-  });
-  const demoListing = execFileSync(
-    "unzip",
-    ["-Z1", resolve(releaseDir, demoName)],
-    { encoding: "utf8" },
-  );
-  for (const expected of ["index.html", "default-ui.css"]) {
-    if (!demoListing.split("\n").includes(expected))
-      throw new Error(`Demo ZIP is missing ${expected}.`);
-  }
+  await verifyReleaseDemo(resolve(releaseDir, demoName));
 } finally {
   await rm(temp, { recursive: true, force: true });
 }
 console.log(
-  "Release asset, hash, package, SSR, demo ZIP, and export smoke passed.",
+  "Release asset hashes, exact-tgz consumers, SSR, exports, and static demo input passed.",
 );

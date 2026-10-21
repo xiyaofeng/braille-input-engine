@@ -78,18 +78,37 @@ jobs:
           BRAILLE_PACKAGE_MATRIX_ID: node-${{ matrix.node }}-typescript-${{ matrix.typescript }}
         run: npm run test:package:case
 
+  release-asset-smoke:
+    name: release-asset-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (v4)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Setup Node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run pack:release
+      - run: npm run verify:release-asset
+      - run: npm run test:release-asset:negative
+
   automated-m3-gate:
     name: automated-m3-gate
     if: ${{ always() }}
     needs:
       - ci-auto
       - packed-consumer-matrix
+      - release-asset-smoke
     runs-on: ubuntu-latest
     steps:
       - name: Require every M3 gate
-        if: ${{ needs.ci-auto.result != 'success' || needs.packed-consumer-matrix.result != 'success' }}
+        if: ${{ needs.ci-auto.result != 'success' || needs.packed-consumer-matrix.result != 'success' || needs.release-asset-smoke.result != 'success' }}
         run: |
           echo "ci-auto result: ${{ needs.ci-auto.result }}"
           echo "packed-consumer-matrix result: ${{ needs.packed-consumer-matrix.result }}"
+          echo "release-asset-smoke result: ${{ needs.release-asset-smoke.result }}"
           exit 1
-      - run: echo "automated-m3-gate passed with ci-auto and all packed consumer combinations."
+      - run: echo "automated-m3-gate passed with ci-auto, all packed consumer combinations, and release asset smoke."

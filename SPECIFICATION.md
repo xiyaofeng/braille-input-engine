@@ -1386,16 +1386,16 @@ React、Vue、Svelte 等框架薄封装不在 M3 范围。后续增加时必须�
 | 开发运行时       | Node.js                                       | `24.19.0`                      |
 | 包管理           | npm                                           | `11.17.0`                      |
 | 语言/类型        | `typescript` / `@types/node`                  | `6.0.3` / `24.13.3`            |
-| 构建/声明        | `vite` / `vite-plugin-dts`                    | `8.2.2` / `5.0.3`              |
+| 构建/声明        | `vite` / `typescript` (tsc)                   | `8.2.4` / `6.0.3`              |
 | 单测/覆盖率      | `vitest` / `@vitest/coverage-v8`              | `4.1.11` / `4.1.11`            |
-| DOM/性质测试     | `jsdom` / `fast-check`                        | `30.0.1` / `4.9.0`             |
+| DOM/性质测试     | `jsdom` / `fast-check`                        | `30.1.2` / `4.9.0`             |
 | 真实浏览器自动化 | `@playwright/test`                            | `1.62.1`                       |
 | 自动无障碍       | `axe-core` / `@axe-core/playwright`           | `4.13.0` / `4.13.0`            |
 | Lint             | `eslint` / `@eslint/js` / `typescript-eslint` | `10.8.1` / `10.0.1` / `8.67.0` |
 | 格式化           | `prettier`                                    | `3.9.6`                        |
 | 公开 API         | `@microsoft/api-extractor`                    | `7.58.13`                      |
 | 打包契约         | `publint` / `@arethetypeswrong/cli`           | `0.3.24` / `0.18.5`            |
-| 许可证           | `license-checker-rseidelsohn`                 | `5.0.1`                        |
+| 许可证           | `scripts/check-licenses.mjs`                  | 随源码版本固定                 |
 | Markdown 链接    | `markdown-link-check`                         | `3.15.0`                       |
 | gzip 体积        | `gzip-size`                                   | `7.0.0`                        |
 
@@ -1428,6 +1428,8 @@ npm run verify:release-evidence
 ```
 
 版本控制的 `docs/milestones.json` 是当前里程碑的机器可读来源，至少包含 `milestone`、启用的 suites、required status 名称和批准该提升的 ADR。`ci:auto` 不接受可绕过的降级参数，并按 manifest 固定顺序执行当前里程碑可自动化的 format、lint、type、unit/DOM/model/type contract、build、SSR、browser、a11y、packed-package、size、performance、API、security/license 和 link 门禁。CI 可以分 job 并行，但 required aggregator 必须覆盖同一集合；任何 job 都不得只因没有测试文件而零测试成功。
+
+M3 准入还要求在同一干净 commit 上依次执行 `pack:release` → `verify:release-asset`；CI 的 required aggregator 必须包含独立的 release-asset smoke job。该 job 仅生成和验证本地产物，不上传或发布 Release。两个脚本对完整 Git archive 流式计算 SHA-256，并在归档进程失败时拒绝继续。验包递归检查条件 exports，对准确 release tgz 执行真实消费者套件，并将准确 demo ZIP 解压后静态托管，验证资源加载及 F/Space 的实际盲文输入；required job 同时执行哈希自洽的损坏产物负向回归。
 
 `pack:release` 只在本地从干净工作区构建第 25.4 节的可选 GitHub Release 资产和 `SHA256SUMS`，不访问 registry，不上传。`verify:release-asset` 必须解压实际 tarball，在干净 fixture 验证 Node ESM/CJS、TypeScript、SSR、浏览器模块、IIFE、CSS、demo 静态托管和所有 `exports` 子路径。`verify:release-evidence` 依据 `docs/release/evidence.schema.json` 校验 M4 报告；schema 至少包含 version、tag、commit、每个资产的 SHA-256、测试日期、环境完整版本、`pending|passed|failed`、已知限制、例外引用和所有者决策。该命令不伪装执行人工测试。
 
