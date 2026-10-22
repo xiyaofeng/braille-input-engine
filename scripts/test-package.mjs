@@ -16,6 +16,7 @@ import vm from "node:vm";
 import { build } from "esbuild";
 import { chromium } from "playwright";
 
+import { testAutoRegisterPackage } from "./test-auto-register-package.mjs";
 import { testLifecyclePackage } from "./test-lifecycle-package.mjs";
 
 const root = resolve(fileURLToPath(new URL("../", import.meta.url)));
@@ -167,6 +168,7 @@ try {
     packageRoot,
     join(consumerRoot, "node_modules", packageJson.name),
   );
+  await testAutoRegisterPackage(consumerRoot, packageJson.name);
   const esmFixture = join(consumerRoot, "consumer.mjs");
   await writeFile(
     esmFixture,

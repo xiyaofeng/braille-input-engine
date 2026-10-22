@@ -378,12 +378,31 @@ export function renderDefaultBrailleUI(
   const onDiscard = (): void => {
     if (actionAllowed()) controller.cancelPending();
   };
+  // WebKit does not focus buttons on native clicks. Keep the current
+  // focus (and editable selection) through output actions instead of letting
+  // the browser move it to body. Never restore focus after a real group exit.
+  // Cancel mousedown, not pointerdown: cancelling a touch pointerdown can
+  // suppress WebKit's compatibility mouse events and click entirely. Keyboard
+  // activation keeps the button's normal focus behavior.
+  const preserveOutputFocus = (event: MouseEvent): void => {
+    if (event.button === 0) event.preventDefault();
+  };
+  const actionControls: Array<[HTMLButtonElement, () => void]> = [
+    [commit, onCommit],
+    [retry, onRetry],
+    [backspace, onBackspace],
+    [clear, onClear],
+    [discard, onDiscard],
+  ];
+  for (const [control, onClick] of actionControls) {
+    control.addEventListener("mousedown", preserveOutputFocus);
+    control.addEventListener("click", onClick);
+    cleanup.push(() => {
+      control.removeEventListener("mousedown", preserveOutputFocus);
+      control.removeEventListener("click", onClick);
+    });
+  }
   mode.addEventListener("change", onModeChange);
-  commit.addEventListener("click", onCommit);
-  clear.addEventListener("click", onClear);
-  backspace.addEventListener("click", onBackspace);
-  retry.addEventListener("click", onRetry);
-  discard.addEventListener("click", onDiscard);
 
   const standalone = options.shadow !== true;
   const hadMarker = standalone && host.hasAttribute("data-braille-ui-root");
@@ -556,11 +575,6 @@ export function renderDefaultBrailleUI(
       chordTest?.detach();
       for (const dispose of cleanup.splice(0)) dispose();
       mode.removeEventListener("change", onModeChange);
-      commit.removeEventListener("click", onCommit);
-      clear.removeEventListener("click", onClear);
-      backspace.removeEventListener("click", onBackspace);
-      retry.removeEventListener("click", onRetry);
-      discard.removeEventListener("click", onDiscard);
       groupToken?.();
       container.remove();
       if (standalone && !hadMarker)
